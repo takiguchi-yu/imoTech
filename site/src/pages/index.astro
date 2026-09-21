@@ -1,0 +1,50 @@
+---
+import Base from "../layouts/Base.astro";
+import { allTags, formatDate, publishedArticles } from "../lib/articles";
+
+const articles = await publishedArticles();
+const tags = allTags(articles);
+---
+
+<Base
+  title="imoTech"
+  description="Hacker News で議論を呼んだ記事を、元記事の要旨と議論の論調、そして運営者の imo とともに日本語で紹介します。"
+>
+  <p>
+    Hacker News で議論を呼んだ英語圏のテック記事を、<strong>元記事の要旨</strong>・<strong
+      >議論の論調</strong
+    >・<strong>imo（運営者の所感）</strong>の 3 つで紹介しています。
+  </p>
+
+  {
+    tags.length > 0 && (
+      <ul class="tags">
+        {tags.map((t) => (
+          <li>
+            <a href={`/tags/${t}/`}>#{t}</a>
+          </li>
+        ))}
+      </ul>
+    )
+  }
+
+  {
+    articles.length === 0 ? (
+      <p class="meta">まだ記事がありません。</p>
+    ) : (
+      <ul class="entries">
+        {articles.map((a) => (
+          <li>
+            <h2>
+              <a href={`/articles/${a.id}/`}>{a.data.title}</a>
+            </h2>
+            <p class="meta">
+              {formatDate(a.data.publishedAt)} ・ HN {a.data.hnScore} points /{" "}
+              {a.data.hnComments} comments
+            </p>
+          </li>
+        ))}
+      </ul>
+    )
+  }
+</Base>

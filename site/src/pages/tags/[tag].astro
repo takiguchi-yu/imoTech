@@ -1,0 +1,32 @@
+---
+import Base from "../../layouts/Base.astro";
+import { allTags, formatDate, publishedArticles } from "../../lib/articles";
+
+export async function getStaticPaths() {
+  const articles = await publishedArticles();
+  return allTags(articles).map((tag) => ({
+    params: { tag },
+    props: { articles: articles.filter((a) => a.data.tags.includes(tag)), tag },
+  }));
+}
+
+const { articles, tag } = Astro.props;
+---
+
+<Base title={`#${tag} の記事`}>
+  <h1>#{tag}</h1>
+  <p class="meta">{articles.length} 件</p>
+  <ul class="entries">
+    {
+      articles.map((a) => (
+        <li>
+          <h2>
+            <a href={`/articles/${a.id}/`}>{a.data.title}</a>
+          </h2>
+          <p class="meta">{formatDate(a.data.publishedAt)}</p>
+        </li>
+      ))
+    }
+  </ul>
+  <p><a href="/">← 記事一覧へ</a></p>
+</Base>

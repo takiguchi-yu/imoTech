@@ -1,0 +1,88 @@
+---
+interface Props {
+  title: string;
+  description?: string;
+}
+const { title, description } = Astro.props;
+const site = "imoTech";
+---
+
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title === site ? site : `${title} | ${site}`}</title>
+    {description && <meta name="description" content={description} />}
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="alternate" type="application/rss+xml" title={site} href="/rss.xml" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/">{site}</a>
+      <nav>
+        <a href="/about">このサイトについて</a>
+        <a href="/privacy">プライバシー</a>
+        <a href="/rss.xml">RSS</a>
+      </nav>
+    </header>
+    <main><slot /></main>
+    <footer>
+      <p>
+        Hacker News の議論を日本語でまとめています。要旨と論調の整理は生成 AI、imo は運営者が書いています。
+        <a href="/about">制作プロセス</a>
+      </p>
+    </footer>
+    <style is:global>
+      /* デザインは後回しの方針。読める最低限だけ整える */
+      :root {
+        --fg: #1a1a1a;
+        --muted: #666;
+        --line: #e0e0e0;
+        --accent: #0a5;
+        --bg: #fff;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #e8e8e8;
+          --muted: #999;
+          --line: #333;
+          --accent: #4c9;
+          --bg: #161616;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        color: var(--fg);
+        background: var(--bg);
+        font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+        line-height: 1.8;
+      }
+      header, main, footer { max-width: 44rem; margin: 0 auto; padding: 0 1rem; }
+      header {
+        display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; align-items: baseline;
+        padding-top: 1.5rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--line);
+      }
+      .brand { font-weight: 700; font-size: 1.25rem; text-decoration: none; color: var(--fg); }
+      nav { display: flex; gap: 1rem; font-size: 0.875rem; }
+      a { color: var(--accent); }
+      main { padding-top: 2rem; padding-bottom: 3rem; }
+      footer {
+        border-top: 1px solid var(--line); padding-top: 1.5rem; padding-bottom: 3rem;
+        color: var(--muted); font-size: 0.8125rem;
+      }
+      h1 { font-size: 1.5rem; line-height: 1.5; }
+      h2 { font-size: 1.125rem; margin-top: 2.5rem; border-bottom: 1px solid var(--line); padding-bottom: 0.25rem; }
+      h3 { font-size: 1rem; margin-top: 1.75rem; }
+      .meta { color: var(--muted); font-size: 0.8125rem; }
+      .tags { display: flex; flex-wrap: wrap; gap: 0.5rem; list-style: none; padding: 0; }
+      .tags a { font-size: 0.75rem; text-decoration: none; border: 1px solid var(--line); border-radius: 999px; padding: 0.125rem 0.625rem; }
+      .entries { list-style: none; padding: 0; }
+      .entries li { padding: 1.25rem 0; border-bottom: 1px solid var(--line); }
+      .entries h2 { border: 0; margin: 0 0 0.25rem; font-size: 1.0625rem; }
+      .entries h2 a { text-decoration: none; }
+      .disclosure { margin-top: 3rem; padding: 0.875rem 1rem; border-left: 3px solid var(--line); color: var(--muted); font-size: 0.8125rem; }
+    </style>
+  </body>
+</html>

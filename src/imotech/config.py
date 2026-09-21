@@ -79,6 +79,11 @@ class Settings(BaseSettings):
         default=REPO_ROOT / "data" / "candidates.jsonl",
         validation_alias="IMOTECH_CANDIDATES_PATH",
     )
+    # 公開物の Markdown の置き場所。Astro の Content Collections がここを見る
+    articles_dir: Path = Field(
+        default=REPO_ROOT / "site" / "src" / "content" / "articles",
+        validation_alias="IMOTECH_ARTICLES_DIR",
+    )
 
 
 def load_settings() -> Settings:

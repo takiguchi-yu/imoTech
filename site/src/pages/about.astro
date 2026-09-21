@@ -1,0 +1,71 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base
+  title="このサイトについて"
+  description="imoTech の制作プロセスと、生成 AI の使い方の開示。"
+>
+  <h1>このサイトについて</h1>
+
+  <p>
+    imoTech は、<a href="https://news.ycombinator.com/" rel="noopener">Hacker News</a>
+    で議論を呼んだ英語圏のテック記事を、日本語で紹介するメディアです。
+    英文の議論を追いきれない読者に向けて、「何が起きたか」だけでなく「何が争点になったか」を届けることを目的にしています。
+  </p>
+
+  <h2>何を機械がやり、何を人間がやるか</h2>
+
+  <p>
+    Google の <a
+      href="https://developers.google.com/search/docs/fundamentals/creating-helpful-content"
+      rel="noopener">people-first コンテンツの指針</a
+    >に「自動化（AI 生成を含む）の利用が読者に明らかになっているか」という自己点検項目があります。これに答える形で、制作プロセスを公開します。
+  </p>
+
+  <table>
+    <thead>
+      <tr><th>工程</th><th>担当</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>話題の収集（Hacker News の API から）</td><td>機械</td></tr>
+      <tr><td>「議論になったか」の判定（スコアとコメント数の閾値）</td><td>機械</td></tr>
+      <tr><td>元記事の本文取得</td><td>機械（robots.txt を確認したうえで）</td></tr>
+      <tr><td>元記事の要旨の作成</td><td><strong>生成 AI</strong>（Google Gemini）</td></tr>
+      <tr><td>議論の論調の整理</td><td><strong>生成 AI</strong>（Google Gemini）</td></tr>
+      <tr><td><strong>imo（所感）の執筆</strong></td><td><strong>人間（運営者）</strong></td></tr>
+      <tr><td>公開するかどうかの判断</td><td><strong>人間（運営者）</strong></td></tr>
+    </tbody>
+  </table>
+
+  <p>
+    <strong>imo が書かれていない記事は公開されません。</strong>
+    生成された下書きは、運営者が所感を書き加えるまで公開待ちの状態で止まります。機械だけで記事が世に出ることはありません。
+  </p>
+
+  <h2>引用元のコメントの扱い</h2>
+
+  <p>
+    Hacker News のコメントは<strong>原文を転載していません</strong>。個々の発言を訳して並べるのではなく、論点ごとに再構成した文章として掲載しています。
+    投稿者のハンドル名・メールアドレス・プロフィールへのリンクは、生成 AI に渡す前の段階で機械的に取り除いています。
+  </p>
+
+  <p>
+    元記事の本文も、要旨を作るための入力としてのみ使い、サイトに転載することはありません。
+    元の議論は各記事の「出典」からたどれます。
+  </p>
+
+  <h2>連絡先</h2>
+  <p>
+    <strong>現在準備中です。</strong>
+    このサイトの記述に誤りを見つけた場合や、掲載について申し入れがある場合の窓口は、
+    公開までにこのページに掲載します。それまでの間にご連絡が必要な場合は、
+    元記事の配信元を通じてお知らせください。
+  </p>
+
+  <style>
+    table { border-collapse: collapse; width: 100%; font-size: 0.9375rem; }
+    th, td { border: 1px solid var(--line); padding: 0.5rem 0.75rem; text-align: left; }
+    th { background: color-mix(in srgb, var(--line) 40%, transparent); }
+  </style>
+</Base>

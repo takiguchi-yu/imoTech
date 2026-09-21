@@ -14,7 +14,8 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  python:
+    name: パイプライン
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -38,3 +39,60 @@ jobs:
 
       - name: テスト
         run: uv run pytest -q
+
+  site:
+    name: サイト
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          # site/package.json の engines に合わせる
+          node-version: "22.12"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: 依存をロックファイル通りに入れる
+        run: npm ci
+
+      # 公開ゲートのテスト。ここが壊れると imo 未記入の記事が公開される
+      - name: ゲートのテスト
+        run: npm test
+
+      - name: 型チェック
+        run: npm run check
+
+      - name: ビルド
+        # CI では SITE_URL が必須（未設定だと localhost の URL が sitemap と RSS に入る）。
+        # ドメイン確定までは仮の値を入れて、ガードが効いていることも同時に確かめる。
+        run: npm run build
+        env:
+          SITE_URL: https://example.invalid
+
+      # imo 未記入の記事がビルド出力に混ざっていないことを、成果物そのもので確かめる。
+      # ゲートの単体テストが通っていても、経路のどこかで漏れれば意味がない
+      - name: 未記入の記事が出力に含まれないこと
+        run: |
+          set -euo pipefail
+          leaked=0
+          for f in src/content/articles/*.md; do
+            [ -e "$f" ] || continue
+            slug="$(basename "$f" .md)"
+            if grep -q 'このコメント行を消すまで' "$f"; then
+              if [ -e "dist/articles/$slug/index.html" ]; then
+                echo "::error file=$f::imo 未記入なのに dist/articles/$slug/ が生成されている"
+                leaked=1
+              fi
+              if grep -rq "$slug" dist/rss.xml dist/sitemap-0.xml 2>/dev/null; then
+                echo "::error file=$f::imo 未記入なのに RSS か sitemap に載っている"
+                leaked=1
+              fi
+            fi
+          done
+          [ "$leaked" -eq 0 ] && echo "imo 未記入の記事は出力に含まれていない"

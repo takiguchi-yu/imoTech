@@ -11,12 +11,15 @@ import re
 import time
 import unicodedata
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from .models import AnonymizedReaction, ArticleDraft, ArticleSource, DiscoursePoint, Story
 
 PROMPT_PATH = Path(__file__).with_name("prompts") / "compose.md"
+
+# slug の日付は JST。render.py の publishedAt と揃える
+JST = timezone(timedelta(hours=9))
 
 RESPONSE_SCHEMA = {
     "type": "object",
@@ -85,12 +88,42 @@ def build_user_prompt(
     return "\n".join(lines)
 
 
+def normalize_tag(tag: str) -> str:
+    """タグを URL に置ける形に正規化する。
+
+    LLM は「英小文字の技術タグ」と指示しても `ci/cd` `tcp/ip` `a/b testing` を返す。
+    これらは指示に反していない（どれも英小文字の技術タグである）が、`/` が入ると
+    Astro のルートパラメータ分解に失敗し、**そのタグだけでなくビルド全体が落ちる**。
+    空白入りは URL が未エンコードのまま出力され、大文字小文字違いは macOS の
+    ファイルシステムで衝突する。ここで潰しておく。
+    """
+    s = unicodedata.normalize("NFKD", tag).encode("ascii", "ignore").decode("ascii")
+    # c++ を c に潰すと C 言語のタグと混ざる。慣例どおり cpp にする
+    s = s.replace("+", "p")
+    s = re.sub(r"[^a-zA-Z0-9]+", "-", s).strip("-").lower()
+    return re.sub(r"-{2,}", "-", s)
+
+
+def normalize_tags(tags: list[str], *, limit: int = 5) -> list[str]:
+    """正規化し、空と重複を落として順序を保ったまま limit 件までにする。"""
+    out: list[str] = []
+    for t in tags:
+        n = normalize_tag(t)
+        if n and n not in out:
+            out.append(n)
+    return out[:limit]
+
+
 def slugify(hint: str, *, when: datetime) -> str:
-    """YYYY-MM-DD-<hint> の形にする。英数字とハイフン以外は落とす。"""
+    """YYYY-MM-DD-<hint> の形にする。英数字とハイフン以外は落とす。
+
+    日付は JST。publishedAt も JST なので、URL の日付と表示日付を揃える。
+    UTC で切ると日本時間の朝に作った記事が前日の URL になる。
+    """
     s = unicodedata.normalize("NFKD", hint).encode("ascii", "ignore").decode("ascii")
     s = re.sub(r"[^a-zA-Z0-9]+", "-", s).strip("-").lower()
     s = re.sub(r"-{2,}", "-", s)[:60].strip("-") or "untitled"
-    return f"{when.astimezone(UTC):%Y-%m-%d}-{s}"
+    return f"{when.astimezone(JST):%Y-%m-%d}-{s}"
 
 
 @dataclass
@@ -222,7 +255,7 @@ def _to_draft(
         slug=slugify(payload["slug_hint"], when=now),
         digest=list(payload["digest"]),
         discourse=discourse,
-        tags=list(payload.get("tags") or []),
+        tags=normalize_tags(list(payload.get("tags") or [])),
         source_url=story.url,
         source_title=story.title,
         hn_url=story.hn_url,

@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import json
 import sys
 import time
@@ -15,11 +14,12 @@ from collections import Counter
 from datetime import UTC, datetime
 
 from .anonymize import anonymize, scrub_title, scrub_url
-from .config import USER_AGENT, Settings, load_settings
+from .config import REPO_ROOT, USER_AGENT, Settings, load_settings
 from .extract import ArticleFetcher
 from .llm import LLMError, build_user_prompt, load_system_instruction
 from .models import Candidate, CandidateState, SkipReason
 from .pipeline import mark_skipped, matured_candidates, select
+from .render import has_imo, write_article
 from .sources.hackernews import HackerNews
 from .store import CandidateStore
 from .urlhash import url_hash
@@ -209,6 +209,9 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
         return 0
 
     no_content: list[Candidate] = []
+    drafted: list[Candidate] = []
+    empty: list[Candidate] = []
+    failed: list[Candidate] = []
     with ArticleFetcher(
         user_agent=USER_AGENT,
         timeout=settings.http_timeout_seconds,
@@ -273,17 +276,51 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
                 )
             except LLMError as e:
                 _p(f"    → 生成に失敗、pending のまま残します: {e}")
+                failed.append(c)
                 continue
             _p(f"    生成成功: model={result.model} attempts={result.attempts}")
-            _p(
-                json.dumps(
-                    dataclasses.asdict(result.draft), ensure_ascii=False, indent=2, default=str
-                )
-            )
-            _p("    ※ Notion への投入と state の更新は M2 で実装します")
+            try:
+                path, created = write_article(result.draft, settings.articles_dir)
+            except ValueError as e:
+                # 要旨や論調が空。見出しだけの記事にはしない
+                _p(f"    → 記事にならないため飛ばします: {e}")
+                empty.append(c)
+                continue
+            rel = path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path
+            _p(f"    → {rel}" if created else f"    → {rel} は既にあるので上書きしません")
+            if not created:
+                _p("      （この記事の生成結果は破棄しました。次回は生成しません）")
+            # 書けても既にあっても、この候補の記事はディスク上に存在する。
+            # 状態を進めないと毎回選出され、そのたびに Gemini を呼んで課金される
+            c.state = CandidateState.DRAFTED
+            drafted.append(c)
+            # 途中で落ちても進捗が失われないよう、1 件ごとに書き戻す
+            if not args.dry_run:
+                store.update([c])
 
-    to_skip = list(sel.to_skip) + [(c, SkipReason.NO_CONTENT) for c in no_content]
+    to_skip = (
+        list(sel.to_skip)
+        + [(c, SkipReason.NO_CONTENT) for c in no_content]
+        + [(c, SkipReason.LLM_FAILED) for c in empty]
+    )
     _apply_skips(store, to_skip, dry_run=args.dry_run)
+
+    # 何も成功しなかった実行でも、何が起きたかと次の一手を必ず出す
+    _p("")
+    _p(
+        f"まとめ: 選出 {len(sel.selected)} / 記事化 {len(drafted)} / "
+        f"本文取得できず {len(no_content)} / 生成失敗 {len(failed)} / 内容不足 {len(empty)}"
+    )
+    if args.dry_run:
+        _p(f"--dry-run のため何も書いていません。本実行なら最大 {len(sel.selected)} 件を")
+        _p(f"{settings.articles_dir} に書き出します。")
+    elif drafted:
+        _p(f"{settings.articles_dir} の `## imo` に所感を書くと公開されます。")
+        _p("未記入の一覧は `uv run imotech status`、表示の確認は `cd site && npm run dev`。")
+    elif failed:
+        _p("生成に失敗した候補は pending のまま残しました。次回の実行で再挑戦します。")
+    else:
+        _p("新しく記事化できたものはありませんでした。")
     return 0
 
 
@@ -331,6 +368,38 @@ def cmd_stats(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_status(settings: Settings, args: argparse.Namespace) -> int:
+    """書き出した記事のうち、imo がまだ書かれていないものを挙げる。
+
+    「imo を書いたのにサイトに出ない」を自力で切り分けられるようにするため。
+    判定はサイト側（site/src/lib/imo.ts）と同じ規則。
+    """
+    d = settings.articles_dir
+    _p(f"記事ディレクトリ: {d}")
+    if not d.exists():
+        _p("まだ 1 件も書き出されていません。`uv run imotech compose` を実行してください。")
+        return 0
+
+    files = sorted(d.glob("*.md"))
+    if not files:
+        _p("まだ 1 件も書き出されていません。`uv run imotech compose` を実行してください。")
+        return 0
+
+    pending, published = [], []
+    for f in files:
+        (published if has_imo(f.read_text(encoding="utf-8")) else pending).append(f)
+
+    _p(f"全 {len(files)} 件: 公開中 {len(published)} / imo 未記入 {len(pending)}")
+    if pending:
+        _p("")
+        _p("imo 未記入（サイトに出ていません）:")
+        for f in pending:
+            _p(f"  {f.name}")
+        _p("")
+        _p("各ファイルの `## imo` にあるコメント行を消して、自分の言葉で所感を書いてください。")
+    return 0
+
+
 # --- entrypoint -----------------------------------------------------------
 
 
@@ -370,13 +439,19 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     )
 
     sub.add_parser("stats", help="候補ストアを集計する（閾値調整の材料）")
+    sub.add_parser("status", help="書き出した記事のうち imo 未記入のものを挙げる")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     settings = load_settings()
     args = build_parser(settings).parse_args(argv)
-    handlers = {"collect": cmd_collect, "compose": cmd_compose, "stats": cmd_stats}
+    handlers = {
+        "collect": cmd_collect,
+        "compose": cmd_compose,
+        "stats": cmd_stats,
+        "status": cmd_status,
+    }
     return handlers[args.command](settings, args)
 
 

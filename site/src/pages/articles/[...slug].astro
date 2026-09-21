@@ -1,0 +1,55 @@
+---
+import { render } from "astro:content";
+import Base from "../../layouts/Base.astro";
+import { formatDate, publishedArticles } from "../../lib/articles";
+
+export async function getStaticPaths() {
+  // imo が書かれていない記事はここに載らない＝ページ自体が生成されない
+  const articles = await publishedArticles();
+  return articles.map((article) => ({
+    params: { slug: article.id },
+    props: { article },
+  }));
+}
+
+const { article } = Astro.props;
+const { Content } = await render(article);
+const d = article.data;
+---
+
+<Base title={d.title} description={d.sourceTitle}>
+  <article>
+    <h1>{d.title}</h1>
+    <p class="meta">
+      {formatDate(d.publishedAt)} ・ HN {d.hnScore} points / {d.hnComments} comments
+    </p>
+    {
+      d.tags.length > 0 && (
+        <ul class="tags">
+          {d.tags.map((t) => (
+            <li>
+              <a href={`/tags/${t}/`}>#{t}</a>
+            </li>
+          ))}
+        </ul>
+      )
+    }
+
+    <Content />
+
+    <h2>出典</h2>
+    <ul>
+      <li>元記事: <a href={d.sourceUrl} rel="noopener">{d.sourceTitle}</a></li>
+      <li><a href={d.hnUrl} rel="noopener">Hacker News のスレッド</a></li>
+      <li><a href={d.hatenaUrl} rel="noopener">はてなブックマークのコメント</a></li>
+    </ul>
+
+    <p><a href="/">← 記事一覧へ</a></p>
+
+    <p class="disclosure">
+      本記事の「元記事の要旨」と「議論の論調」は {d.model} による生成で、<strong>imo は運営者が執筆</strong>しています。
+      引用元のコメントは原文を転載せず、論点ごとに再構成しています。
+      <a href="/about">制作プロセス</a>
+    </p>
+  </article>
+</Base>

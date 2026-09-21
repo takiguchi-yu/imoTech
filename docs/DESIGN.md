@@ -76,6 +76,32 @@ flowchart TB
 
 **毎正時を避ける理由**: 公式ドキュメントに「The `schedule` event can be delayed during periods of high loads of GitHub Actions workflow runs. High load times include the start of every hour. If the load is sufficiently high enough, some queued jobs may be dropped.」と明記されている（[events-that-trigger-workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)）。分をずらしても drop の可能性は消えないため、**遅延・欠落を前提にした設計**（下記 5.5）にしている。
 
+### 1.2b ローカル通し（Notion を使わない経路）
+
+M2 の前に、外部アカウントを使わずに通しで動かす経路を用意した。M1 の完成後、
+「生成物の行き先が無い」状態を解消するために入れたもので、**M2 を置き換えるものではない**。
+
+```
+collect → compose → site/src/content/articles/<slug>.md → Astro → localhost:4321
+                         ↑ ここで止まり、人が imo を書くまで公開されない
+```
+
+Notion 運用との対応:
+
+| Notion 経由（M2 以降） | ローカル通し（いま） |
+|---|---|
+| Draft を Notion に投入 | Markdown を `site/src/content/articles/` に書き出す |
+| `imo` プロパティが空なら公開しない | 本文の `IMO_PLACEHOLDER` が残っていれば公開しない |
+| 人が Status を Approved にする | 人がプレースホルダを自分の言葉に置き換える |
+| `publish` が Markdown を commit | `compose` が直接書くので commit は手動 |
+| state を `drafted` にする | 同じ（Markdown を書けた時点で `drafted`） |
+
+**公開の引き金を「人が何かを書くこと」に置いている点は同じ**。フラグを立てる方式にすると
+立て忘れが起きるが、この方式なら書かないかぎり出ない。
+
+`IMO_PLACEHOLDER` は `src/imotech/render.py` と `site/src/content.config.ts` の
+両方に定義があり、ずれると「imo 未記入の記事が公開される」ため `tests/test_render.py` で突合している。
+
 ### 1.3 コンポーネントの責務と依存の向き
 
 ```
@@ -262,12 +288,11 @@ generatedAt: 2026-09-22T06:12:31Z
 
 ## imo
 
-（人間が Notion に書いた 1 行以上）
+（人間が書いた 1 行以上。空のあいだはプレースホルダが入り、公開されない）
 
----
-
-本記事の要旨と論調の整理は Gemini による生成で、imo は運営者が執筆しています。→ [制作プロセス](/about)
 ```
+
+出典と AI 利用の開示は**本文に入れない**。サイトのテンプレート（`site/src/pages/articles/[...slug].astro`）がフロントマターから描く。本文にも持たせると片方だけ古くなる。
 
 `hatenaUrl` は `https://b.hatena.ne.jp/entry/s/` + 元記事 URL から scheme を除いたもの（https の場合）。**API は呼ばず、文字列として組み立てるだけ**。
 
@@ -572,9 +597,12 @@ imoTech/
 │   ├── wrangler.jsonc             Workers + Static Assets
 │   ├── public/
 │   └── src/
-│       ├── content.config.ts      Content Collections のスキーマ
+│       ├── content.config.ts      Content Collections のスキーマと IMO_PLACEHOLDER
+│       ├── lib/
+│       │   ├── imo.ts             ★ 公開判定と定数の唯一の定義元（npm test の対象）
+│       │   └── articles.ts        コレクションの取得・タグ集計・日付整形
 │       ├── content/
-│       │   └── articles/          ★ 公開物の Markdown（publish が commit する）
+│       │   └── articles/          ★ 公開物の Markdown（compose が書く。M2 以降は publish が commit）
 │       ├── layouts/
 │       │   └── Base.astro
 │       ├── components/
