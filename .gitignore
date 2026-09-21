@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# 秘密情報（public リポジトリ前提のため厳守）
+.env
+.env.local
+
+# Astro / Node
+site/node_modules/
+site/dist/
+site/.astro/
+
+# 候補ストアの書き込み中に残りうる一時ファイル
+*.tmp
+
+# OS
+.DS_Store

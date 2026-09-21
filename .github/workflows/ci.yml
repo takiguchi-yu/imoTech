@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同じブランチへの連続 push で古い実行を止める
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: uv をセットアップ
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 依存をロックファイル通りに入れる
+        run: uv sync --frozen
+
+      # 実行順は docs/DESIGN.md と references/code.md に合わせる。
+      # 前の工程が落ちたら後続を読む意味がないので、順に止める。
+      - name: フォーマット
+        run: uv run ruff format --check .
+
+      - name: 静的解析
+        run: uv run ruff check .
+
+      - name: テスト
+        run: uv run pytest -q
