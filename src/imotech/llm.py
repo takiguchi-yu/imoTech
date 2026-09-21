@@ -152,6 +152,10 @@ class DraftGenerator:
             response_mime_type="application/json",
             response_schema=RESPONSE_SCHEMA,
             temperature=0.4,
+            # ツールは一切使わない。既定のままだと SDK が毎回
+            # 「Direct use of automatic function calling ... is not recommended」を
+            # 出力し、Actions のログが警告で埋まって障害調査の邪魔になる。
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
         # 連続呼び出しのあいだに固定のウェイトを入れる（docs/DESIGN.md 5.1）。

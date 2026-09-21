@@ -80,3 +80,8 @@
 
 **分かったこと**: 社内プロキシ（Netskope）下では `uv` が TLS 検証に失敗する。
 `SSL_CERT_FILE="$AWS_CA_BUNDLE"` を付けると通る。README に記載済み。GitHub Actions では不要。
+
+### 追記（2026-09-21）
+
+`GEMINI_API_KEY` を発行して `.env` に設定済み。実 API での生成が通ることを確認した
+（M1 チケット末尾を参照）。**実 RPD の確認はまだ**で、これが M0 の最優先の残タスク。
