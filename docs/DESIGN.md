@@ -434,7 +434,17 @@ MODEL_CHAIN = [
 
 **スロットリング**: 記事間に固定 6 秒の sleep を入れる。5 本でも合計 30 秒で、20 分の timeout に対して十分な余裕がある。
 
-**RPD/RPM が未確認であることへの対処**: Google は[レート制限の数値を公式ドキュメントから削除](https://ai.google.dev/gemini-api/docs/rate-limits)し（"Rate limits ... can be viewed in Google AI Studio"）、AI Studio のログイン後ページでしか公開していない。よって**設計上は「上限が何であれ 429 で落ちる」前提**にし、モデルフォールバックとスキップで吸収する。実際の枠は M1 のタスクで [AI Studio](https://aistudio.google.com/rate-limit) を開いて確認し、この文書に追記する。
+**RPD/RPM の公称値は確認できない**: Google は[レート制限の数値を公式ドキュメントから削除](https://ai.google.dev/gemini-api/docs/rate-limits)し（"Rate limits ... can be viewed in Google AI Studio"）、AI Studio のログイン後ページでしか公開していない。さらに**この環境では組織の管理者が AI Studio を無効化**しており、そのページも開けない。
+
+**代わりに実ワークロードで実測した（2026-09-21）**。1 日分（5 本）を流した結果:
+
+| 指標 | 実測 |
+|---|---|
+| 429（レート制限） | **0 件** |
+| 503（一時的な不可用） | **20 件**（3.8=8 / 3.7=6 / 3.6=6） |
+| 生成成功 | 3 件（うち 2 件は 10 回目の試行で成功） |
+
+**無料枠は「枠」ではなく「空き」で律速されている。** よって `MAX_DRAFTS_PER_RUN = 5` を下げる理由は無い。一方で**モデルフォールバックが無いと成立しない**（2 件は 3.8 → 3.7 → 3.6 → 3.5 と落ちてようやく通った）。鎖を短くしてはならない。
 
 **匿名化の強制**: `llm.py` は `anonymize.py` を通していない生の反応を受け取れない型にする（`AnonymizedReaction` 型を引数に取る）。無料枠は[規約](https://ai.google.dev/gemini-api/terms)に "human reviewers may read, annotate, and process your API input and output... Do not submit sensitive, confidential, or personal information to the Unpaid Services." とあるため、PII の送信を実装レベルで防ぐ。
 

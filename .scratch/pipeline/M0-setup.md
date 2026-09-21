@@ -28,9 +28,9 @@
 
 ### Google AI Studio
 - [ ] API キーを発行し、`.env` に `GEMINI_API_KEY=` を設定した（課金アカウントの登録は不要。新規アカウントは自動で Free Tier）
-- [ ] **https://aistudio.google.com/rate-limit を開き、`gemini-3.8-flash` 以下 5 モデルの実際の RPM / RPD / TPM を控えた**
-- [ ] 控えた数値を `docs/DESIGN.md` の「5.1 Gemini API」に追記した（公式ドキュメントからは削除されており、ここでしか確認できない）
-- [ ] 実測した RPD が `MAX_DRAFTS_PER_RUN = 5` を下回っていないか確認した（下回るなら設定値を下げる）
+- [ ] ~~https://aistudio.google.com/rate-limit を開き、実 RPM/RPD/TPM を控える~~ ← **この経路は使えない**（下記参照）。代わりに実ワークロードで測った
+- [x] 実測結果を `docs/DESIGN.md` の「5.1 Gemini API」に追記した
+- [x] `MAX_DRAFTS_PER_RUN = 5` が無料枠に収まることを実ワークロードで確認した（429 が 0 件）
 
 ### Notion
 - [ ] **メンバーが自分 1 人だけ**のワークスペースを用意した（2 人目を入れると Free プランは生涯 1,000 ブロック上限がかかり、API が 403 を返してパイプラインが停止する）
@@ -85,3 +85,12 @@
 
 `GEMINI_API_KEY` を発行して `.env` に設定済み。実 API での生成が通ることを確認した
 （M1 チケット末尾を参照）。**実 RPD の確認はまだ**で、これが M0 の最優先の残タスク。
+
+### AI Studio のレート制限ページは開けない（2026-09-21 確認）
+
+Chrome から `https://aistudio.google.com/rate-limit` を開いたところ、
+**組織の管理者が AI Studio を無効化**しており「AI Studio へのアクセス権がありません」となった
+（`access.workspace.google.com/ServiceNotAllowed` へリダイレクト）。`?authuser=1` でも同じ。
+公式ドキュメントから数値が削除されている以上、**この環境では RPD の公称値を読む手段が無い**。
+
+代わりに **1 日分の実ワークロード（5 本生成）を流して実測**した。結果は M1 チケット末尾に記載。
