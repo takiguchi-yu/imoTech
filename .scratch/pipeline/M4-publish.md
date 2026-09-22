@@ -25,7 +25,12 @@ Workers Builds の Git 連携がそれを検知してサイトをビルド・公
 - [x] 記事詳細のレイアウト末尾に、AI 生成の固定文を入れた
       （「本記事の要旨と論調の整理は Gemini による生成で、imo は運営者が執筆しています」+ /about へのリンク）
 - [x] `site/src/pages/privacy.astro` を作った（AdSense 申請時に見られる）
-- [x] 運営者情報を `/about` に含めた
+- [ ] 運営者情報を `/about` に含めた
+      **未充足だった。** チェックが入っていたが、`site/src/pages/about.astro:58-64` の「連絡先」節は
+      「**現在準備中です。**」のプレースホルダで、氏名・団体名・連絡先の実体が無い。
+      検証で発覚（`cat site/src/pages/about.astro`）。
+      何を載せるかは**個人情報の公開範囲の判断**なので運営者が決める必要がある。
+      AdSense の申請時に見られるため、遅くとも M5 の着手前に埋める
 
 ### Markdown 生成
 - [x] `src/imotech/render.py` に `to_markdown(draft) -> str` を実装した
