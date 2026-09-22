@@ -81,8 +81,8 @@ Workers Builds の Git 連携がそれを検知してサイトをビルド・公
 - [x] ~~Cloudflare ダッシュボードで Workers プロジェクトを作り、**GitHub リポジトリと連携**した~~
       → **Git 連携は使わない。** 代わりに次の 3 つを用意する
 - [ ] 「Edit Cloudflare Workers」テンプレートで API トークンを発行し、`gh secret set CLOUDFLARE_API_TOKEN` した
-- [ ] Account ID を `gh secret set CLOUDFLARE_ACCOUNT_ID` した
-- [ ] `*.workers.dev` のサブドメインを確認し、`gh variable set SITE_URL` した
+- [x] Account ID を `gh secret set CLOUDFLARE_ACCOUNT_ID` した
+- [x] `*.workers.dev` のサブドメインを確認し、`gh variable set SITE_URL` した
 - [x] ビルドとデプロイを `publish.yml` のステップにした
       （`npm run build` → `cloudflare/wrangler-action@v4` の `command: deploy`。
       出力先は `site/wrangler.jsonc` の `assets.directory: "./dist"`。
@@ -286,3 +286,66 @@ CI は `35684...`（`d8d6874`）で green。
   `src/imotech/notion.py` の `request()` のエラー文からパスの ID をマスクする
 - **「1 件は手書き imo でローカル優先、残り全部が skip」のとき終了コードは 0** になる。
   1 件は Notion が進むので完全な失敗ではないと判断した
+
+---
+
+## 公開できた（2026-09-22）
+
+**https://imotech.y-takiguti.workers.dev**
+
+`wrangler login` → `wrangler deploy` で 1 回目のデプロイを通し、出力された URL を
+`SITE_URL` に入れて再ビルド・再デプロイした（1 回目は `SITE_URL` 無しでビルドしたため
+sitemap と RSS に localhost の URL が入っていた）。
+
+```
+$ npx wrangler deploy
+✨ Success! Uploaded 8 files (1.76 sec)
+Uploaded imotech (4.55 sec)
+Deployed imotech triggers (0.66 sec)
+  https://imotech.y-takiguti.workers.dev
+
+$ SITE_URL=https://imotech.y-takiguti.workers.dev npm run build
+$ grep -o 'https://[^<]*' dist/sitemap-0.xml | head -3
+https://imotech.y-takiguti.workers.dev/
+https://imotech.y-takiguti.workers.dev/about/
+https://imotech.y-takiguti.workers.dev/privacy/
+```
+
+### 公開 URL の実測
+
+| パス | ステータス | Content-Type |
+|---|---|---|
+| `/` | 200 | text/html |
+| `/about/` | 200 | text/html |
+| `/privacy/` | 200 | text/html |
+| `/rss.xml` | 200 | application/xml |
+| `/sitemap-index.xml` | 200 | application/xml |
+| `/no-such-page` | **404** | — |
+
+**`not_found_handling` を指定しない場合の既定挙動は 404 を返すこと**が分かった
+（レビューで未確認として挙がっていた点）。`index.html` へのフォールバックではないので、
+ソフト 404 にはならない。カスタム 404 を作るときに `"not_found_handling": "404-page"` を
+入れればよい。
+
+`compatibility_date: "2026-09-22"`（当日）は**サーバ側に受理された**（これも未確認だった点）。
+
+### GitHub 側の設定
+
+```
+$ gh secret list
+CLOUDFLARE_ACCOUNT_ID  2026-09-22T04:37:01Z
+GEMINI_API_KEY         2026-09-22T02:40:08Z
+NOTION_DATABASE_ID     2026-09-22T02:40:10Z
+NOTION_TOKEN           2026-09-22T02:40:09Z
+$ gh variable list
+SITE_URL  https://imotech.y-takiguti.workers.dev
+```
+
+**残りは `CLOUDFLARE_API_TOKEN`**（「Edit Cloudflare Workers」テンプレートで発行）。
+これが入るまで `publish.yml` のデプロイステップは失敗する。
+
+### 未確認のまま残るもの
+
+- **`SITE_URL` のガードが Actions で効くかは確認済みだが、Workers Builds では未確認。**
+  Git 連携を使わない方式にしたので、この経路自体が無くなった
+- cron（毎時 23 分）での自動実行は時間待ち

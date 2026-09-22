@@ -12,6 +12,8 @@ Hacker News で議論を呼んだ英語圏のテック記事を、**元記事の
 - 設計: [docs/DESIGN.md](./docs/DESIGN.md)
 - 進め方とタスク: [.scratch/pipeline/](./.scratch/pipeline/)
 
+**公開 URL: https://imotech.y-takiguti.workers.dev**（独自ドメインは未取得。`*.workers.dev` で進めている）
+
 ## いまの状態
 
 | マイルストーン | 状態 |
@@ -21,7 +23,7 @@ Hacker News で議論を呼んだ英語圏のテック記事を、**元記事の
 | **ローカル通し（Notion を飛ばして localhost まで）** | **完了** — `compose` が Markdown を書き、Astro でサイトが出る |
 | **M2 Notion 連携** | **完了** — `notion-setup` / `notion-sync` / `publish`。Notion を使わない運用も引き続き成立する |
 | **M3 GitHub Actions で定時実行** | **完了** — 手動実行・失敗通知・自動 commit を実測済み（完了条件 24 件のうち 22 件）。cron の初回実行は 2026-09-23 06:17 JST |
-| M4 公開（Cloudflare Workers） | コードは完成（`publish.yml` / `site/wrangler.jsonc`）。Cloudflare のプロジェクト作成と通し確認が残り |
+| **M4 公開（Cloudflare Workers）** | **サイトは公開済み**（https://imotech.y-takiguti.workers.dev）。`CLOUDFLARE_API_TOKEN` の登録と、Notion 承認の通し確認が残り |
 
 ## セットアップ
 
@@ -359,6 +361,7 @@ gh run list --workflow daily.yml --limit 5     # 実行されているか
 
 **ドメインは未確定のあいだ `*.workers.dev` で進める。** 収益化（AdSense の ads.txt）には
 ルートドメインが必要だが、それは M5 の話で、公開そのものには要らない。
+いまの公開先は **https://imotech.y-takiguti.workers.dev**。
 
 **デプロイは `publish.yml` が `wrangler deploy` で行う。** Workers Builds の Git 連携は
 使わない — Cloudflare 側でビルドが落ちると Actions は成功してしまい、失敗が Issue に乗らない
@@ -372,8 +375,9 @@ gh run list --workflow daily.yml --limit 5     # 実行されているか
 ダッシュボードで見るのは **3 つの値だけ**。あとは CLI で済む。
 
 1. [Cloudflare のアカウントを作る](https://dash.cloudflare.com/sign-up)（Free で足りる）
-2. [Workers & Pages](https://dash.cloudflare.com/?to=/:account/workers-and-pages) を開いて
-   **サブドメイン**（`xxx.workers.dev` の `xxx`）と **Account ID** を控える
+2. `npx wrangler login`（ブラウザで認証）→ `npx wrangler whoami` で **Account ID** が出る。
+   **サブドメイン**は最初の `npx wrangler deploy` の出力に公開 URL として出る
+   （ダッシュボードの Workers & Pages にも表示されている）
 3. [Account API tokens](https://dash.cloudflare.com/profile/api-tokens) → **Create Token** →
    Custom の **「Edit Cloudflare Workers」** テンプレートでトークンを発行する
 4. GitHub 側に入れる
