@@ -70,20 +70,33 @@ Workers Builds の Git 連携がそれを検知してサイトをビルド・公
       行単位で解決できず競合する。publish が触るのは記事 Markdown と Notion だけに留める）
 
 ### Cloudflare Workers + Static Assets
+
+> **方式を変えた（2026-09-22）。** Workers Builds の Git 連携ではなく、
+> **`publish.yml` から `wrangler deploy` を叩く**ことにした。理由は 3 つ:
+> (1) Git 連携だと Cloudflare 側でビルドが落ちても Actions は成功するので失敗が Issue に
+> 乗らない、(2) Workers Builds にパスフィルタが無く Free の月 500 ビルド枠を無駄に食う、
+> (3) `SITE_URL` を Actions の `env` で渡せるので設定漏れが起きない。
+> `docs/DESIGN.md` 5.5 に記録した。以下の条件はこの方式に読み替えている。
 - [x] `site/wrangler.jsonc` に `assets` の設定を書いた
-- [ ] Cloudflare ダッシュボードで Workers プロジェクトを作り、**GitHub リポジトリと連携**した
-- [ ] ビルドコマンドを `npm run build` に設定した
-      （**出力ディレクトリの設定項目は Workers Builds に無い。** `site/wrangler.jsonc` の
-      `assets.directory: "./dist"` が担う。設定できるのは Git アカウント・リポジトリ・ブランチ・
-      ビルドコマンド・デプロイコマンド・ルートディレクトリ・ビルド変数だけ —
-      [configuration](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)）
-      **Worker 名は `imotech` にする必要がある**（公式が "The Worker name in the Cloudflare
-      dashboard must match the `name` in the Wrangler configuration file in the specified
-      root directory, or the build will fail." と明記）
-- [ ] ルートディレクトリを `site/` に設定した（モノレポ構成のため）
-- [ ] `main` への push で自動ビルドが走ることを確認した
-- [ ] **Deploy Hook が不要であることを確認した**（Git 連携で自動ビルドされるなら、Actions から叩く必要はない。走らない場合のみ Deploy Hook を追加し、URL を Secrets に置く）
-- [ ] ~~独自ドメインを設定した（M0 で取得済みの場合）~~
+- [x] ~~Cloudflare ダッシュボードで Workers プロジェクトを作り、**GitHub リポジトリと連携**した~~
+      → **Git 連携は使わない。** 代わりに次の 3 つを用意する
+- [ ] 「Edit Cloudflare Workers」テンプレートで API トークンを発行し、`gh secret set CLOUDFLARE_API_TOKEN` した
+- [ ] Account ID を `gh secret set CLOUDFLARE_ACCOUNT_ID` した
+- [ ] `*.workers.dev` のサブドメインを確認し、`gh variable set SITE_URL` した
+- [x] ビルドとデプロイを `publish.yml` のステップにした
+      （`npm run build` → `cloudflare/wrangler-action@v4` の `command: deploy`。
+      出力先は `site/wrangler.jsonc` の `assets.directory: "./dist"`。
+      **承認が 0 件の回はスキップし、手動実行のときは commit が無くても実行する** —
+      デプロイだけが失敗した回を再実行で復旧できるようにするため）
+- [x] ~~ルートディレクトリを `site/` に設定した（モノレポ構成のため）~~
+      → `wrangler-action` の `workingDirectory: site` で指定した（ダッシュボードの設定は不要）
+- [x] ~~`main` への push で自動ビルドが走ることを確認した~~
+      → **`main` への push では走らない。** `GITHUB_TOKEN` による push は他のワークフローを
+      起動しないため（[公式](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)）、
+      デプロイは `publish.yml` と**同じジョブの中**に置いた。別ワークフローに切り出すと走らない
+- [x] ~~**Deploy Hook が不要であることを確認した**~~
+      → **Deploy Hook も Git 連携も使わない。** `wrangler deploy` を直接叩く方式にしたため
+- [x] ~~独自ドメインを設定した（M0 で取得済みの場合）~~
       → **該当しない。`*.workers.dev` で進めると決めた**（M0 の「ドメインを後回しにする場合は
       `*.workers.dev` で進める判断を README に 1 行残す」に従い、README の「公開」節に記載）。
       収益化（ads.txt はルートドメイン起点でクロールされる）に必要になるのは M5

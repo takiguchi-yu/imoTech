@@ -20,7 +20,7 @@ flowchart TB
     STORE[("data/candidates.jsonl<br/>候補ストア")]
     HUMAN(["★ 人間<br/>imo を書き Status を Approved にする"])
     MD[("site/src/content/articles/&lt;slug&gt;.md<br/>公開物")]
-    CFB["Cloudflare Workers Builds<br/>Git 連携で自動ビルド"]
+    CFB["Cloudflare Workers<br/>publish.yml が wrangler deploy で配る"]
     SITE["Workers + Static Assets<br/>imoTech 公開"]
 
     subgraph DAILY["daily.yml — 毎日 06:17 JST"]
@@ -64,14 +64,14 @@ flowchart TB
 ```
 
 矢印の番号は処理の順序を表す。**9 番だけが人間の操作**で、他はすべて自動。
-`git push` の先は Actions から叩かず、Workers Builds の Git 連携に任せる（Deploy Hook を使わない理由は 5.5 参照）。
+デプロイは `publish.yml` が `wrangler deploy` で行う（Workers Builds の Git 連携を使わない理由は 5.5 参照）。
 
 ### 1.2 ワークフローの分割
 
 | ワークフロー | トリガー | 責務 | timeout |
 |---|---|---|---|
 | `daily.yml` | cron `17 21 * * *` (UTC) = 毎日 06:17 JST + `workflow_dispatch` | collect → compose | 20 分 |
-| `publish.yml` | cron `23 * * * *` = 毎時 23 分 + `workflow_dispatch` | Approved 検知 → commit | 10 分 |
+| `publish.yml` | cron `23 * * * *` = 毎時 23 分 + `workflow_dispatch` | Approved 検知 → commit → ビルド → `wrangler deploy` → Notion を Published に | 10 分 |
 | `ci.yml` | `push` / `pull_request` | lint + test | 10 分 |
 
 **毎正時を避ける理由**: 公式ドキュメントに「The `schedule` event can be delayed during periods of high loads of GitHub Actions workflow runs. High load times include the start of every hour. If the load is sufficiently high enough, some queued jobs may be dropped.」と明記されている（[events-that-trigger-workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)）。分をずらしても drop の可能性は消えないため、**遅延・欠落を前提にした設計**（下記 5.5）にしている。
@@ -581,8 +581,33 @@ GET https://hn.algolia.com/api/v1/search_by_date
 | `NOTION_TOKEN` | Notion 内部インテグレーション | Notion の Integrations 画面 |
 | `NOTION_DATABASE_ID` | 対象 DB | Notion の DB URL |
 | `GITHUB_TOKEN` | commit / issue 起票 / 失敗ステップの特定 | Actions が自動発行（`permissions: {contents: write, issues: write, actions: read}` を宣言。`actions: read` は `gh run view --json jobs` が実行の記録を読むために必要） |
+| `CLOUDFLARE_API_TOKEN` | `wrangler deploy` | Cloudflare の Account API tokens で「Edit Cloudflare Workers」テンプレートから発行 |
+| `CLOUDFLARE_ACCOUNT_ID` | 同上 | Cloudflare ダッシュボード |
 
-`CLOUDFLARE_API_TOKEN` は**不要**。Workers Builds の Git 連携が push を検知して自動ビルドするため、Actions からデプロイを叩かない。
+**Variables**（secret ではない。値が見えてよいもの）:
+
+| 名前 | 用途 |
+|---|---|
+| `SITE_URL` | `astro build` が sitemap と RSS に焼き込む絶対 URL。`https://imotech.<サブドメイン>.workers.dev` |
+
+**デプロイは Actions から `wrangler deploy` を叩く。** Workers Builds の Git 連携ではなく、
+`publish.yml` の中でビルドしてデプロイする。理由は 3 つ。
+
+1. **失敗を検知できる。** Git 連携だと Cloudflare 側でビルドが落ちても Actions は成功するので
+   Issue が立たず、サイトが何日も古いままになる（気づく手段はダッシュボードだけ）
+2. **Cloudflare のビルド枠を使わない。** Free は月 500 ビルド・同時 1 ビルドで、
+   **Workers Builds にパスフィルタは無い**（[configuration](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)
+   の設定項目は Git アカウント・リポジトリ・ブランチ・ビルドコマンド・デプロイコマンド・
+   ルートディレクトリ・ビルド変数だけ）。`candidates.jsonl` だけの commit でもビルドが走る
+3. **`SITE_URL` の設定漏れが起きない。** Actions の `env` で渡せる
+
+使うのは公式アクション `cloudflare/wrangler-action@v4`
+（[github-actions](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/)）。
+`GITHUB_TOKEN` による push は他のワークフローを起動しないため、デプロイは
+**`publish.yml` と同じジョブの中**に置く（別ワークフローに切り出すと走らない）。
+
+`daily.yml` はデプロイしない。`compose` が書く記事は `imo` 未記入で、サイト側のゲートが
+公開から外すため、公開物は変わらない。
 
 ### 5.6 「RSS のフォーマット差異」について（元の要件からの変更点）
 

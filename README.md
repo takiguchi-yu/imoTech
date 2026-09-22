@@ -255,7 +255,7 @@ uv run imotech status   # imo 未記入と判定されている記事が挙が�
 | ワークフロー | いつ | 何をする |
 |---|---|---|
 | [`daily.yml`](./.github/workflows/daily.yml) | 毎日 06:17 JST（cron `17 21 * * *`）+ 手動 | `collect` → `compose` → 候補ストアと記事 Markdown を commit して push |
-| [`publish.yml`](./.github/workflows/publish.yml) | 毎時 23 分（cron `23 * * * *`）+ 手動 | `publish` → Notion で承認された記事の `imo` を Markdown に差し込んで commit。Cloudflare がその push を検知してサイトをビルドする |
+| [`publish.yml`](./.github/workflows/publish.yml) | 毎時 23 分（cron `23 * * * *`）+ 手動 | `publish` → 承認された記事の `imo` を Markdown に差し込んで commit → ビルド → `wrangler deploy` → Notion を `Published` に進める |
 | [`ci.yml`](./.github/workflows/ci.yml) | `push` / `pull_request` | format・lint・test（Python とサイトの両方） |
 
 毎正時を避けているのは、公式に「High load times include the start of every hour」「some queued
@@ -285,8 +285,10 @@ gh secret list                   # 名前と更新日だけが見える
 
 ファイルから入れるときは `gh secret set GEMINI_API_KEY < key.txt`。
 
-`GITHUB_TOKEN` は登録しない（Actions が実行ごとに自動発行する）。`CLOUDFLARE_API_TOKEN` も
-不要 — Workers Builds の Git 連携が push を検知するので、Actions からデプロイを叩かない。
+サイトを公開するには、これに加えて Cloudflare の 2 つと `SITE_URL` が要る
+（→「[公開（Cloudflare Workers）](#公開cloudflare-workers)」）。
+
+`GITHUB_TOKEN` は登録しない（Actions が実行ごとに自動発行する）。
 
 ### 失敗したとき
 
@@ -358,64 +360,45 @@ gh run list --workflow daily.yml --limit 5     # 実行されているか
 **ドメインは未確定のあいだ `*.workers.dev` で進める。** 収益化（AdSense の ads.txt）には
 ルートドメインが必要だが、それは M5 の話で、公開そのものには要らない。
 
-Actions からデプロイを叩かない。**Workers Builds の Git 連携**が `main` への push を検知して
-ビルドとデプロイを行う。つまり `publish.yml` が Markdown を commit すると、その push で
-サイトが更新される。`CLOUDFLARE_API_TOKEN` を GitHub Secrets に置く必要もない。
+**デプロイは `publish.yml` が `wrangler deploy` で行う。** Workers Builds の Git 連携は
+使わない — Cloudflare 側でビルドが落ちると Actions は成功してしまい、失敗が Issue に乗らない
+ため（詳しい理由は [docs/DESIGN.md](./docs/DESIGN.md) 5.5）。
 
-### 初回のセットアップ（ダッシュボード操作）
+`daily.yml` はデプロイしない。`compose` が書く記事は `imo` 未記入で、サイト側のゲートが
+公開から外すので公開物が変わらない。
 
-0. [Cloudflare のアカウントを作る](https://dash.cloudflare.com/sign-up)（Free で足りる）
-1. [Workers & Pages](https://dash.cloudflare.com/?to=/:account/workers-and-pages) →
-   **Create → Workers → Import a repository** でこのリポジトリを選ぶ
+### 初回のセットアップ
 
-   途中で GitHub の許可ダイアログが出る。**そこでこのリポジトリを選んで許可する**
-   （Cloudflare の GitHub App がインストールされる）。選ばないと次の一覧に出てこない
+ダッシュボードで見るのは **3 つの値だけ**。あとは CLI で済む。
 
-2. ビルド設定をこうする（モノレポなので**ルートディレクトリの指定が要る**）
+1. [Cloudflare のアカウントを作る](https://dash.cloudflare.com/sign-up)（Free で足りる）
+2. [Workers & Pages](https://dash.cloudflare.com/?to=/:account/workers-and-pages) を開いて
+   **サブドメイン**（`xxx.workers.dev` の `xxx`）と **Account ID** を控える
+3. [Account API tokens](https://dash.cloudflare.com/profile/api-tokens) → **Create Token** →
+   Custom の **「Edit Cloudflare Workers」** テンプレートでトークンを発行する
+4. GitHub 側に入れる
 
-   | 項目 | 値 |
-   |---|---|
-   | Root directory | `site` |
-   | Build command | `npm run build` |
-   | Deploy command | `npx wrangler deploy`（既定のまま） |
-   | Build variables | `SITE_URL` = `https://imotech.<アカウントのサブドメイン>.workers.dev` |
+   ```bash
+   gh secret set CLOUDFLARE_API_TOKEN      # プロンプトに貼って Enter
+   gh secret set CLOUDFLARE_ACCOUNT_ID
+   gh variable set SITE_URL --body "https://imotech.<サブドメイン>.workers.dev"
+   ```
 
-   出力ディレクトリの設定項目は無い。[`site/wrangler.jsonc`](./site/wrangler.jsonc) の
-   `assets.directory` が `./dist` を指しており、それが使われる
+   `SITE_URL` は secret ではなく **variable**（値が見えてよい）。未設定だと
+   `site/astro.config.mjs` のガードがビルドを落とす — `localhost` の URL が sitemap と
+   RSS に焼き込まれたまま公開されるのを防ぐため
 
-   **Worker 名は `imotech` にする。** 公式が "The Worker name in the Cloudflare dashboard
-   must match the `name` in the Wrangler configuration file in the specified root directory,
-   or the build will fail." と明記している（[Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/)）
+5. デプロイする
 
-   サブドメインは Workers & Pages のページに出ている。**先に確認して手順 2 で
-   `SITE_URL` を入れておけば、1 回目のビルドから通る。**
+   ```bash
+   gh workflow run publish.yml && gh run watch
+   ```
 
-3. `SITE_URL` を入れずに作ってしまったら、**1 回目のビルドは落ちる**。
-   `site/astro.config.mjs` は `CI` 環境変数がある状態で `SITE_URL` が無いと意図的に例外を
-   投げる（入れ忘れると `localhost` の URL が sitemap と RSS に焼き込まれたまま公開される
-   ため）。その場合は発行された URL を確認して、
+   承認が 0 件でも、**手動実行のときはビルドとデプロイを行う**（cron のときは commit が
+   あったときだけ）。公開 URL を開いて記事が読めることを確認する
 
-   - **Settings → Build → Variables and Secrets** に `SITE_URL` = その URL を足す
-   - **Deployments** → 一番上のビルド → **Retry deployment**
-
-4. `main` に push してビルドが走ることを確認する。走らない場合だけ Deploy Hook を追加する
-
-### ビルド回数
-
-Cloudflare Free は **月 500 ビルド・同時 1 ビルド**。**Workers Builds にパスフィルタは無い**
-（[設定できる項目](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)は
-Git アカウント・リポジトリ・ブランチ・ビルドコマンド・デプロイコマンド・ルートディレクトリ・
-ビルド変数だけ）。つまり `data/candidates.jsonl` だけが変わった commit でもビルドが走る。
-
-| 内訳 | 回数/月 |
-|---|---|
-| `daily.yml`（毎日 1 commit） | 30 |
-| `publish.yml`（承認が入った時間帯だけ commit する） | 承認した時間帯の数 × 30 |
-| 人が `main` に push した分 | 開発中は増える |
-
-**1 日 3 回の承認なら月 120 回**で収まる。毎時 1 件ずつ承認すると 750 回で枠を超えるので、
-承認はまとめて行うほうがよい。枠を使い切るとその月はデプロイが止まり、**Actions は成功する
-ので Issue も立たない**（気づく手段は Cloudflare のダッシュボードだけ）。
+Worker 名は `imotech`。[`site/wrangler.jsonc`](./site/wrangler.jsonc) の `name` がそれで、
+初回のデプロイでこの名前の Worker が作られる。
 
 ### ローカルでの確認
 
@@ -426,20 +409,27 @@ npm run build && npx wrangler dev        # dist を Workers のランタイム�
 npx wrangler deploy --dry-run            # 設定だけ検証する（デプロイしない）
 ```
 
+手元から本番に出すこともできる（`wrangler login` でブラウザ認証したあと）。
+
+```bash
+SITE_URL=https://imotech.<サブドメイン>.workers.dev npm run build
+npx wrangler deploy
+```
+
 ### サイトが更新されないとき
 
-止まりうる場所が 3 つある。上から順に切る。
+止まりうる場所を上から順に切る。**すべて CLI で追える。**
 
 ```bash
 uv run imotech status                                     # 1. imo が入っているか
 gh run list --workflow publish.yml --limit 5              # 2. publish が走ったか
-git log --oneline -5 -- site/src/content/articles         #    commit が入ったか
+gh run view <id> --log-failed                             #    どのステップで落ちたか
+git log --oneline -5 -- site/src/content/articles         # 3. commit が入ったか
+npx wrangler deployments list --cwd site                  # 4. デプロイが届いたか
 ```
 
-3 つ目は Cloudflare 側。**Workers & Pages → `imotech` → Deployments** で、その push に
-対応するビルドが走ったかとビルドログを見る。走っていなければ Git 連携が切れているので、
-Settings → Build から繋ぎ直す（それでも走らなければ Deploy Hook を追加して
-`publish.yml` から叩く）。
+`publish.yml` が成功しているのにサイトが古いままなら、`SITE_URL` が古い値のまま
+ビルドされている可能性がある（`gh variable list` で確認する）。
 
 ## 開発
 

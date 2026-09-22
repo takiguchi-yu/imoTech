@@ -58,6 +58,7 @@ jobs:
       # （`store.save` は JSONL を全行書き直すため、daily.yml と同時に走ると
       # rebase が行単位で解決できず競合する）。add 対象もそれに合わせる
       - name: 反映を commit して push する
+        id: commit
         run: |
           set -euo pipefail
 
@@ -71,8 +72,10 @@ jobs:
           # 承認が 0 件の時間帯がほとんど。変更が無いのは失敗ではない
           if git diff --cached --quiet; then
             echo "反映するものはありません"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
 
           # 実行は毎時 23 分（UTC）。履歴を JST で読むので日付も JST で打つ
           git commit -m "chore: publish approved articles ($(TZ=Asia/Tokyo date '+%Y-%m-%d'))"
@@ -95,6 +98,42 @@ jobs:
                "ままなので、次回の実行が拾います"
           exit 1
 
+      # ここから Cloudflare へ配る。Workers Builds の Git 連携を使わないのは、
+      # Cloudflare 側でビルドが落ちると Actions は成功してしまい、失敗が Issue に
+      # 乗らないため（docs/DESIGN.md 5.5）。Cloudflare の月 500 ビルド枠も使わない。
+      #
+      # 手動実行のときは commit が無くてもデプロイする。デプロイだけが失敗した回の
+      # 復旧が、再実行で効くようにするため
+      - name: Node をセットアップ
+        if: steps.commit.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        uses: actions/setup-node@v4
+        with:
+          # site/package.json の engines に合わせる（型ストリッピングの下限）
+          node-version: "22.18"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: サイトをビルドする
+        if: steps.commit.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        working-directory: site
+        run: |
+          npm ci
+          npm run build
+        env:
+          # 未設定だと astro.config.mjs のガードが落とす。localhost の URL が
+          # sitemap と RSS に焼き込まれたまま公開されるのを防ぐため
+          SITE_URL: ${{ vars.SITE_URL }}
+
+      - name: Cloudflare にデプロイする
+        if: steps.commit.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: site
+          command: deploy
+
+      # サイトに出たことを確かめてから Notion を進める。
       # ここまで来れば Markdown は main に入っている。もう一度 publish を実行すると、
       # imo が入った記事は already 分岐に落ちて Notion 側だけが Published に進む。
       # 1 回目で進めないのは、push が失敗したときに「Notion は Published なのに
@@ -134,8 +173,15 @@ jobs:
               → `daily.yml` と同じ記事ファイルを同時に触った。**Notion 側は `Approved` の
               まま**なので取りこぼしは無く、競合を解決すれば次回の実行（毎時 23 分）が拾う。
               急ぐなら `git pull --rebase` して `gh workflow run publish.yml`
+            - **ビルドが失敗した**（`SITE_URL が未設定です`）
+              → `gh variable set SITE_URL --body https://imotech.<サブドメイン>.workers.dev`。
+              Markdown は main に入っているので、直して `gh workflow run publish.yml`
+            - **デプロイが失敗した**（`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`）
+              → `gh secret list` で更新日を確認する。トークンの権限は
+              「Edit Cloudflare Workers」。**直したら `gh workflow run publish.yml` で
+              再実行する**（手動実行のときは commit が無くてもデプロイする）
             - **「Notion を Published に進める」ステップだけが失敗した**
-              → Markdown は main に入っているのでサイトは更新される。Notion 側の
+              → Markdown は main に入り、サイトも更新されている。Notion 側の
               `Status` が `Approved` のまま残るだけで、次回の実行が進める
             - **timeout（10 分）またはキャンセル**
               → 承認が大量に溜まっている。Notion のレート制限で 1 件あたり数百 ms かかる。
