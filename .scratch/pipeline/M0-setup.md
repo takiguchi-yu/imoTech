@@ -3,7 +3,7 @@
 パイプラインを書き始める前に揃えておくもの。ここが埋まっていないと M1 以降で必ず止まる。
 設計は [docs/DESIGN.md](../../docs/DESIGN.md) を参照。
 
-**Status:** 一部完了（ローカルで完結する分は済み。人間の操作が要る分が未着手）
+**Status:** 一部完了（リポジトリ・Gemini・Notion は完了。Cloudflare とドメイン、実 RPD の確認が残り）
 **Blocked by:** なし（最初に着手するチケット）
 
 > **★ 最初に着手するのは「Google AI Studio」節の1つ目**（実 RPD の確認）。
@@ -14,7 +14,7 @@
 ## 完了条件
 
 ### リポジトリ
-- [ ] `git init` し、GitHub に **public** リポジトリ `imoTech` として push した（public にする理由: Actions の標準ランナーが無料。private だと月 2,000 分の枠を消費する）
+- [x] `git init` し、GitHub に **public** リポジトリ `imoTech` として push した（public にする理由: Actions の標準ランナーが無料。private だと月 2,000 分の枠を消費する）
 - [x] `.gitignore` を置いた（`.env` / `__pycache__/` / `.venv/` / `site/node_modules/` / `site/dist/` / `.astro/`）
 - [x] `data/candidates.jsonl` を空ファイルで作り、commit した（Actions が読む前提のため、無いと初回実行が落ちる）
 - [x] `README.md` にセットアップ手順の見出しだけ置いた
@@ -27,14 +27,14 @@
 - [x] `uv run python -c "import imotech"` がエラーなく通る
 
 ### Google AI Studio
-- [ ] API キーを発行し、`.env` に `GEMINI_API_KEY=` を設定した（課金アカウントの登録は不要。新規アカウントは自動で Free Tier）
+- [x] API キーを発行し、`.env` に `GEMINI_API_KEY=` を設定した（課金アカウントの登録は不要。新規アカウントは自動で Free Tier）
 - [ ] ~~https://aistudio.google.com/rate-limit を開き、実 RPM/RPD/TPM を控える~~ ← **この経路は使えない**（下記参照）。代わりに実ワークロードで測った
 - [x] 実測結果を `docs/DESIGN.md` の「5.1 Gemini API」に追記した
 - [x] `MAX_DRAFTS_PER_RUN = 5` が無料枠に収まることを実ワークロードで確認した（429 が 0 件）
 
 ### Notion
-- [ ] **メンバーが自分 1 人だけ**のワークスペースを用意した（2 人目を入れると Free プランは生涯 1,000 ブロック上限がかかり、API が 403 を返してパイプラインが停止する）
-- [ ] 内部インテグレーションを作成し、トークンを `.env` に `NOTION_TOKEN=` として設定した
+- [x] **メンバーが自分 1 人だけ**のワークスペースを用意した（2 人目を入れると Free プランは生涯 1,000 ブロック上限がかかり、API が 403 を返してパイプラインが停止する）
+- [x] 内部インテグレーションを作成し、トークンを `.env` に `NOTION_TOKEN=` として設定した
 
 ### Cloudflare とドメイン
 - [ ] Cloudflare アカウントを作成した
@@ -94,3 +94,20 @@ Chrome から `https://aistudio.google.com/rate-limit` を開いたところ、
 公式ドキュメントから数値が削除されている以上、**この環境では RPD の公称値を読む手段が無い**。
 
 代わりに **1 日分の実ワークロード（5 本生成）を流して実測**した。結果は M1 チケット末尾に記載。
+
+### 追記（2026-09-22）— GitHub リポジトリを作成した
+
+M3 の着手にあたって public リポジトリを作成し、`main` を push した。
+
+```
+$ gh repo create imoTech --public --source=. --remote=origin --push
+https://github.com/takiguchi-yu/imoTech
+$ gh secret list
+GEMINI_API_KEY      2026-09-22T02:40:08Z
+NOTION_DATABASE_ID  2026-09-22T02:40:10Z
+NOTION_TOKEN        2026-09-22T02:40:09Z
+```
+
+**残っているのは Cloudflare とドメイン、および実 RPD の確認**。いずれも M4 の着手時に必要。
+`gh` の token scope は `gist, read:org, repo` で `workflow` を含まないが、push は SSH 鍵で行うため
+ワークフローファイルの更新も通る（実測済み）。
