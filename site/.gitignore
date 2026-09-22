@@ -2,6 +2,8 @@
 dist/
 # generated types
 .astro/
+# wrangler の作業ディレクトリ（ローカル実行時に作られる）
+.wrangler/
 
 # dependencies
 node_modules/

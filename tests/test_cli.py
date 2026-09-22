@@ -6,10 +6,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from imotech.cli import _apply_skips, build_parser, cmd_compose, cmd_stats
+from imotech.cli import _apply_skips, build_parser, cmd_compose, cmd_publish, cmd_stats
 from imotech.config import Settings
 from imotech.llm import GenerationResult, LLMError
 from imotech.models import (
+    ApprovedPage,
     ArticleDraft,
     ArticleSource,
     Candidate,
@@ -19,7 +20,9 @@ from imotech.models import (
     Story,
 )
 from imotech.notion import NotionBlockLimitError, NotionError
+from imotech.render import set_imo, write_article
 from imotech.store import CandidateStore
+from imotech.urlhash import url_hash
 
 
 def _c(h: str, hours_ago: int = 30) -> Candidate:
@@ -393,3 +396,117 @@ def test_composeはdry_runなら常に0を返す(tmp_path, monkeypatch):
         dry_run=True,
     )
     assert cmd_compose(settings, args) == 0
+
+
+# --- publish の終了コード -------------------------------------------------
+#
+# 無人実行（.github/workflows/publish.yml）は publish の終了コードだけを見て
+# Issue を立てる。「承認されたのに 1 件も反映できなかった」を失敗として扱う。
+
+
+class _FakeNotionClient:
+    """cmd_publish が使う分だけを持つ Notion クライアント。"""
+
+    def __init__(self, approved: list[ApprovedPage]) -> None:
+        self._approved = approved
+        self.published: list[str] = []
+        self.closed = False
+
+    def data_source_id(self, _db_id: str) -> str:
+        return "ds"
+
+    def fetch_approved(self, _ds: str) -> list[ApprovedPage]:
+        return list(self._approved)
+
+    def mark_published(self, page_id: str, *, when=None) -> None:
+        self.published.append(page_id)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _write_article_for(tmp_path, slug: str, source_url: str):
+    """記事 Markdown を 1 本置き、その url_hash を返す。"""
+    draft = ArticleDraft(
+        url_hash=url_hash(source_url),
+        title="タイトル",
+        slug=slug,
+        digest=["要旨1", "要旨2"],
+        discourse=[DiscoursePoint(point="論点", detail="詳細", stance="mixed")],
+        source_url=source_url,
+    )
+    path, _ = write_article(draft, tmp_path / "articles")
+    return path, draft.url_hash
+
+
+def _publish_env(tmp_path, monkeypatch, *, approved: list[ApprovedPage], dry_run: bool = False):
+    client = _FakeNotionClient(approved)
+    monkeypatch.setattr("imotech.cli._notion_client", lambda _s: client)
+    settings = Settings(
+        candidates_path=tmp_path / "c.jsonl",
+        articles_dir=tmp_path / "articles",
+        notion_token="t",
+        notion_database_id="d",
+    )
+    argv = ["publish", "--dry-run"] if dry_run else ["publish"]
+    return settings, build_parser().parse_args(argv), client
+
+
+def test_publishは承認0件なら0を返す(tmp_path, monkeypatch, capsys):
+    settings, args, client = _publish_env(tmp_path, monkeypatch, approved=[])
+    assert cmd_publish(settings, args) == 0
+    assert "処理するものはありません" in capsys.readouterr().out
+    assert client.published == []
+
+
+def test_publishはimoを差し込めたら0を返す(tmp_path, monkeypatch):
+    path, h = _write_article_for(tmp_path, "2026-01-01-a", "https://e.com/a")
+    page = ApprovedPage(page_id="p1", url_hash=h, slug="2026-01-01-a", imo="所感です。")
+    settings, args, client = _publish_env(tmp_path, monkeypatch, approved=[page])
+    assert cmd_publish(settings, args) == 0
+    # Markdown に反映され、Notion 側も Published に進む
+    assert "所感です。" in path.read_text(encoding="utf-8")
+    assert client.published == ["p1"]
+
+
+def test_publishは承認を全件飛ばしたら1を返す(tmp_path, monkeypatch, capsys):
+    # 記事ファイルを置かない＝ compose 前、または Notion 側で Slug が書き換えられた状態。
+    # Status は Approved のまま残るので、人が直すまで次回も同じ結果になる
+    page = ApprovedPage(page_id="p1", url_hash="deadbeef", slug="2026-01-01-none", imo="所感。")
+    settings, args, client = _publish_env(tmp_path, monkeypatch, approved=[page])
+    assert cmd_publish(settings, args) == 1
+    err = capsys.readouterr().err
+    assert "すべてを飛ばしました" in err
+    # 反映していないので Notion 側も進めない（次回また拾えるように）
+    assert client.published == []
+
+
+def test_publishは一部でも反映できれば0を返す(tmp_path, monkeypatch):
+    path, h = _write_article_for(tmp_path, "2026-01-01-a", "https://e.com/a")
+    ok = ApprovedPage(page_id="p1", url_hash=h, slug="2026-01-01-a", imo="所感です。")
+    ng = ApprovedPage(page_id="p2", url_hash="deadbeef", slug="2026-01-01-none", imo="所感。")
+    settings, args, client = _publish_env(tmp_path, monkeypatch, approved=[ok, ng])
+    assert cmd_publish(settings, args) == 0
+    assert "所感です。" in path.read_text(encoding="utf-8")
+    assert client.published == ["p1"]
+
+
+def test_publishはローカルのimoを優先してStatusだけ進める(tmp_path, monkeypatch, capsys):
+    path, h = _write_article_for(tmp_path, "2026-01-01-a", "https://e.com/a")
+    # 人が手で書いた imo。Notion の値で上書きしてはいけない
+    path.write_text(set_imo(path.read_text(encoding="utf-8"), "手で書いた所感。"), encoding="utf-8")
+    page = ApprovedPage(page_id="p1", url_hash=h, slug="2026-01-01-a", imo="Notion の所感。")
+    settings, args, client = _publish_env(tmp_path, monkeypatch, approved=[page])
+    assert cmd_publish(settings, args) == 0
+    body = path.read_text(encoding="utf-8")
+    assert "手で書いた所感。" in body and "Notion の所感。" not in body
+    assert client.published == ["p1"]
+    assert "ローカルの imo を優先" in capsys.readouterr().out
+
+
+def test_publishはdry_runなら全件飛ばしても0を返す(tmp_path, monkeypatch):
+    # 何も書いていないので失敗ではない。判定に混ぜると確認用途が壊れる
+    page = ApprovedPage(page_id="p1", url_hash="deadbeef", slug="2026-01-01-none", imo="所感。")
+    settings, args, client = _publish_env(tmp_path, monkeypatch, approved=[page], dry_run=True)
+    assert cmd_publish(settings, args) == 0
+    assert client.published == []

@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+
+  // Workers プロジェクト名。`*.workers.dev` のサブドメインにもなる
+  // （ドメイン未確定のあいだは imotech.<account>.workers.dev で公開する）。
+  "name": "imotech",
+
+  // Workers のランタイム挙動を固定する日付。上げると挙動が変わりうるので、
+  // 上げるときは意図してやる。
+  "compatibility_date": "2026-09-22",
+
+  // 静的アセットだけを配る Worker なので `main`（Worker スクリプト）は置かない。
+  // Astro は output を指定していない＝完全な静的出力で、
+  // @astrojs/cloudflare アダプタは on-demand rendering のときだけ必要
+  // （https://docs.astro.build/en/guides/deploy/cloudflare/）。
+  //
+  // `not_found_handling` は指定しない。404.html を持っていないため、
+  // "404-page" を指定しても効かない（404 ページを作るときに合わせて入れる）。
+  "assets": {
+    "directory": "./dist"
+  }
+}

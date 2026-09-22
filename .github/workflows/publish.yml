@@ -1,0 +1,118 @@
+name: publish
+
+on:
+  # 毎時 23 分。承認は人の操作なので、いつ来るか分からない。
+  # 毎正時を避ける理由は daily.yml と同じ（公式に「High load times include the
+  # start of every hour」「some queued jobs may be dropped」と明記されている）
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+# commit / push に contents、Issue 起票に issues、
+# 失敗したステップ名を実行の記録から読むのに actions を使う
+permissions:
+  contents: write
+  issues: write
+  actions: read
+
+# 前の実行を殺さない。Markdown を書いたあとに Notion を Published へ進める順序なので、
+# 途中で止めると「書いたのに Approved のまま」が残る（次回が拾えるので害はないが、
+# 同じ記事を 2 つの実行が同時に触るのは避ける）
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: 承認の反映
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # shallow clone のまま rebase すると unshallow が要る場面があるので、
+          # 安全側に振って全履歴を取る
+          fetch-depth: 0
+
+      - name: uv をセットアップ
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 依存をロックファイル通りに入れる
+        run: uv sync --frozen
+
+      # Gemini は呼ばない。Notion から imo だけを取り出して Markdown に差し込む
+      # （記事本文は compose が書いたものが正 — docs/DESIGN.md 3.0b）。
+      #
+      # 終了コードの意味は src/imotech/cli.py の cmd_publish 末尾を参照。
+      # 承認 0 件は 0。1 件でも反映できれば 0（残りは次回が拾う）。
+      # 承認があったのに全件飛ばしたときだけ非 0 にする
+      - name: 承認された記事を反映する
+        run: uv run imotech publish
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+
+      # publish が触るのは記事 Markdown だけ。data/candidates.jsonl は書かない
+      # （`store.save` は JSONL を全行書き直すため、daily.yml と同時に走ると
+      # rebase が行単位で解決できず競合する）。add 対象もそれに合わせる
+      - name: 反映を commit して push する
+        run: |
+          set -euo pipefail
+
+          # 41898282 は github-actions[bot] のユーザー ID
+          # （`gh api /users/github-actions%5Bbot%5D` で確認）
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add site/src/content/articles
+
+          # 承認が 0 件の時間帯がほとんど。変更が無いのは失敗ではない
+          if git diff --cached --quiet; then
+            echo "反映するものはありません"
+            exit 0
+          fi
+
+          # 実行は毎時 23 分（UTC）。履歴を JST で読むので日付も JST で打つ
+          git commit -m "chore: publish approved articles ($(TZ=Asia/Tokyo date '+%Y-%m-%d'))"
+
+          # daily.yml が同時に site/ を触りうるので、push 前に取り込む。
+          # 取り込んだ直後にさらに push が入ることもあるので数回試す
+          for attempt in 1 2 3; do
+            if ! git pull --rebase origin "${GITHUB_REF_NAME}"; then
+              git rebase --abort || true
+              echo "::error::rebase が競合しました。ローカルで解決してから push し直してください"
+              exit 1
+            fi
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+              exit 0
+            fi
+            echo "push が弾かれました。取り込み直します（${attempt} 回目）"
+          done
+          echo "::error::3 回試しても push できませんでした"
+          exit 1
+
+      # timeout（10 分）や手動キャンセルでは failure() は真にならない。
+      # cancelled() は「ワークフローがキャンセルされたら true」
+      # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
+      - name: 失敗を通知する
+        if: ${{ failure() || cancelled() }}
+        uses: ./.github/actions/notify-failure
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          causes: |
+            上から順に疑う。ログの stderr に、どれに当たったかが出ている。
+
+            - **Notion が 403 / 404**（ログに「Notion の呼び出しに失敗しました」）
+              → `NOTION_DATABASE_ID` の誤り、トークン失効、インテグレーションが DB に未接続。
+              `gh secret list` で更新日を確認し `gh secret set NOTION_TOKEN`
+            - **承認された記事を全件飛ばした**（ログに「すべてを飛ばしました」）
+              → Notion 側で `Slug` が書き換えられた、その記事をまだ `compose` していない、
+              記事のフロントマターが壊れている。ログに記事ごとの理由が出ている。
+              直すまで `Status` は `Approved` のままなので、直したら再実行すれば拾える
+            - **`git pull --rebase` が競合**
+              → `daily.yml` と同じ記事ファイルを同時に触った。`git pull --rebase` で解決して
+              から `gh workflow run publish.yml`
+            - **timeout（10 分）またはキャンセル**
+              → 承認が大量に溜まっている。ログの件数を見て、必要なら分割して実行する

@@ -655,6 +655,20 @@ def cmd_publish(settings: Settings, args: argparse.Namespace) -> int:
         if applied or already:
             _p("`cd site && npm run dev` で表示を確認してください。")
             _p("公開物は Git が正なので、確認できたら commit してください。")
+
+        # 無人実行（.github/workflows/publish.yml）はこの終了コードだけを見て Issue を立てる。
+        # 承認されたのに 1 件も反映できなかったのは、人が直すまで回復しない
+        # — 飛ばす理由（Slug の書き換え、記事ファイルが無い、フロントマターが壊れている、
+        # imo が空白だけ）はどれも Notion 側かローカル側の修正を要し、次回も同じ結果になる。
+        # 一方 1 件でも通ったなら、残りは次回の実行が拾う（Status は Approved のまま）。
+        if not args.dry_run and skipped and not applied and not already:
+            _p(
+                f"承認された {len(approved)} 件すべてを飛ばしました。"
+                "Notion 側の Slug の書き換え、compose 前の記事、フロントマターの破損の"
+                "いずれかが疑われます。",
+                err=True,
+            )
+            return 1
         return 0
     except NotionError as e:
         _p(f"Notion の呼び出しに失敗しました: {e}", err=True)

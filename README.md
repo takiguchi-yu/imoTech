@@ -36,13 +36,21 @@ uv sync
 cp .env.example .env    # GEMINI_API_KEY を入れる（compose の本実行に必要）
 ```
 
-### 社内プロキシ下で `uv sync` が TLS エラーになる場合
+### 社内プロキシ下で TLS エラーになる場合
 
-Netskope などの TLS 終端プロキシがあると `invalid peer certificate: UnknownIssuer` で失敗する。
-CA バンドルを `SSL_CERT_FILE` に渡す。
+Netskope などの TLS 終端プロキシがあると、`uv sync` は
+`invalid peer certificate: UnknownIssuer` で失敗する。CA バンドルを `SSL_CERT_FILE` に渡す。
 
 ```bash
 SSL_CERT_FILE="$AWS_CA_BUNDLE" uv sync
+```
+
+**`imotech` の実行にも同じものが必要。** 外部 API（Hacker News・Gemini・Notion）への通信が
+`ConnectError` で落ちる場合はこれが原因。毎回付けるのが面倒ならシェルで export しておく。
+
+```bash
+export SSL_CERT_FILE="$AWS_CA_BUNDLE"
+uv run imotech publish --dry-run
 ```
 
 `AWS_CA_BUNDLE` / `REQUESTS_CA_BUNDLE` / `NODE_EXTRA_CA_CERTS` に同じパスが入っていることが多い。
@@ -247,6 +255,7 @@ uv run imotech status   # imo 未記入と判定されている記事が挙が�
 | ワークフロー | いつ | 何をする |
 |---|---|---|
 | [`daily.yml`](./.github/workflows/daily.yml) | 毎日 06:17 JST（cron `17 21 * * *`）+ 手動 | `collect` → `compose` → 候補ストアと記事 Markdown を commit して push |
+| [`publish.yml`](./.github/workflows/publish.yml) | 毎時 23 分（cron `23 * * * *`）+ 手動 | `publish` → Notion で承認された記事の `imo` を Markdown に差し込んで commit。Cloudflare がその push を検知してサイトをビルドする |
 | [`ci.yml`](./.github/workflows/ci.yml) | `push` / `pull_request` | format・lint・test（Python とサイトの両方） |
 
 毎正時を避けているのは、公式に「High load times include the start of every hour」「some queued
@@ -256,7 +265,8 @@ jobs may be dropped」と明記されているため。ずらしても drop は�
 手動で回すときは Actions タブの daily → **Run workflow**、または:
 
 ```bash
-gh workflow run daily.yml
+gh workflow run daily.yml      # 収集と生成
+gh workflow run publish.yml    # 承認の反映
 gh run watch
 ```
 
@@ -305,6 +315,16 @@ gh workflow run daily.yml                        # 直したら回し直す
 | Notion のブロック上限 | 1 | Free は生涯 1,000 ブロック。課金するか、Markdown の `## imo` に直接書く |
 | Notion への投入が全滅 | 1 | 上 2 つと同じ原因を疑う |
 
+`publish`（`publish.yml`）の非 0 条件:
+
+| 条件 | 終了コード | 直し方 |
+|---|---|---|
+| `NOTION_TOKEN` / `NOTION_DATABASE_ID` が未設定 | 2 | Notion を使わない運用では `publish` を回す必要がない |
+| Notion の呼び出しが失敗 | 1 | トークン失効、DB ID の誤り、インテグレーションが DB に未接続 |
+| 承認された記事を**全件**飛ばした | 1 | Notion 側で `Slug` が書き換えられた、まだ `compose` していない、フロントマターが壊れている。直すまで `Status` は `Approved` のままなので、直して再実行すれば拾える |
+
+承認が 0 件のときと、1 件でも反映できたときは 0（残りは次回の実行が拾う）。
+
 **本文が取れなかっただけ**なら失敗にしない。元記事側の事情で、その候補は `skipped` になり
 次回は別の候補が選ばれる。
 
@@ -326,6 +346,50 @@ gh run list --workflow daily.yml --limit 5     # 実行されているか
 `stats` の pending が増え続けているなら閾値が厳しすぎる。`status` に記事が溜まっているなら、
 自分が imo を書いていないだけ。実行の履歴が飛んでいるなら cron が drop されている
 （`IMOTECH_MAX_AGE_HOURS=96` の猶予があるので、3 回続けて飛ばない限り取りこぼさない）。
+
+## 公開（Cloudflare Workers）
+
+サイトは **Cloudflare Workers + Static Assets** で配る。Cloudflare 公式が
+「Start new projects with Workers」と案内しているため、Pages ではなく Workers を選んでいる。
+
+**ドメインは未確定のあいだ `*.workers.dev` で進める。** 収益化（AdSense の ads.txt）には
+ルートドメインが必要だが、それは M5 の話で、公開そのものには要らない。
+
+Actions からデプロイを叩かない。**Workers Builds の Git 連携**が `main` への push を検知して
+ビルドとデプロイを行う。つまり `publish.yml` が Markdown を commit すると、その push で
+サイトが更新される。`CLOUDFLARE_API_TOKEN` を GitHub Secrets に置く必要もない。
+
+### 初回のセットアップ（ダッシュボード操作）
+
+1. Cloudflare にログインし、**Workers & Pages → Create → Workers → Import a repository** で
+   このリポジトリを選ぶ
+2. ビルド設定をこうする（モノレポなので**ルートディレクトリの指定が要る**）
+
+   | 項目 | 値 |
+   |---|---|
+   | Root directory | `site` |
+   | Build command | `npm run build` |
+   | Deploy command | `npx wrangler deploy`（既定のまま） |
+
+   出力ディレクトリの設定項目は無い。[`site/wrangler.jsonc`](./site/wrangler.jsonc) の
+   `assets.directory` が `./dist` を指しており、それが使われる
+
+3. 作成後に `https://imotech.<アカウントのサブドメイン>.workers.dev` が発行される。
+   **その URL を Build variables の `SITE_URL` に設定して、もう一度ビルドする**
+
+   これを忘れるとビルドが落ちる。`site/astro.config.mjs` は `CI` 環境変数がある状態で
+   `SITE_URL` が無いと意図的に例外を投げる — 入れ忘れると `localhost` の URL が
+   sitemap と RSS に焼き込まれたまま公開されてしまうため
+
+4. `main` に push してビルドが走ることを確認する。走らない場合だけ Deploy Hook を追加する
+
+### ローカルでの確認
+
+```bash
+cd site
+npm run build && npx wrangler dev        # dist を Workers のランタイムで配る
+npx wrangler deploy --dry-run            # 設定だけ検証する（デプロイしない）
+```
 
 ## 開発
 
