@@ -29,7 +29,7 @@ Hacker News で議論を呼んだ英語圏のテック記事を、**元記事の
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)（`curl -LsSf https://astral.sh/uv/install.sh | sh`）
 - Python 3.11 以上。手元に無くても **uv が自動で取得する**ので、事前インストールは不要
-- Node.js 22.12 以上（サイトを見るときだけ。`site/package.json` の `engines` で要求している）
+- Node.js 22.18 以上（サイトを見るときだけ。`site/package.json` の `engines` で要求している）。`npm test` が `.ts` を直接 `node --test` に渡すので、型ストリッピングがデフォルト有効な版が必要
 
 ```bash
 uv sync

@@ -53,8 +53,12 @@ jobs:
       - name: Node をセットアップ
         uses: actions/setup-node@v4
         with:
-          # site/package.json の engines に合わせる
-          node-version: "22.12"
+          # site/package.json の engines に合わせる。22.18 が下限なのは、
+          # `npm test` が .ts を直接 `node --test` に渡しており、型ストリッピングが
+          # デフォルト有効になった版（v22.18.0 / v23.6.0）でないと
+          # ERR_UNKNOWN_FILE_EXTENSION で落ちるため
+          # https://nodejs.org/api/typescript.html
+          node-version: "22.18"
           cache: npm
           cache-dependency-path: site/package-lock.json
 
