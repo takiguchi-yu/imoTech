@@ -82,9 +82,8 @@ jobs:
           for attempt in 1 2 3; do
             if ! git pull --rebase origin "${GITHUB_REF_NAME}"; then
               git rebase --abort || true
-              echo "::error::rebase が競合しました。この時点で Notion 側は既に Published に" \
-                   "進んでいます。該当ページの Status を Approved に戻して再実行するか、" \
-                   "ローカルで記事の ## imo に手で書いて commit してください"
+              echo "::error::rebase が競合しました。Notion 側は Approved のままなので、" \
+                   "競合を解決すれば次回の実行が拾います"
               exit 1
             fi
             if git push origin "HEAD:${GITHUB_REF_NAME}"; then
@@ -92,10 +91,20 @@ jobs:
             fi
             echo "push が弾かれました。取り込み直します（${attempt} 回目）"
           done
-          echo "::error::3 回試しても push できませんでした。Notion 側は既に Published に" \
-               "進んでいます。該当ページの Status を Approved に戻して再実行するか、" \
-               "ローカルで記事の ## imo に手で書いて commit してください"
+          echo "::error::3 回試しても push できませんでした。Notion 側は Approved の" \
+               "ままなので、次回の実行が拾います"
           exit 1
+
+      # ここまで来れば Markdown は main に入っている。もう一度 publish を実行すると、
+      # imo が入った記事は already 分岐に落ちて Notion 側だけが Published に進む。
+      # 1 回目で進めないのは、push が失敗したときに「Notion は Published なのに
+      # Markdown は未コミット」を残さないため（その状態は fetch_approved が
+      # 二度と返さないので、その記事は自動では永久に公開されない）
+      - name: Notion を Published に進める
+        run: uv run imotech publish
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
 
       # timeout（10 分）や手動キャンセルでは failure() は真にならない。
       # cancelled() は「ワークフローがキャンセルされたら true」
@@ -122,10 +131,12 @@ jobs:
               (d) slug が衝突して `<slug>-<hash6>.md` として保存されている。
               いずれも `Status` は `Approved` のまま残るので、直したら再実行すれば拾える
             - **`git pull --rebase` が競合、または push が 3 回弾かれた**
-              → `daily.yml` と同じ記事ファイルを同時に触った。**この時点で Notion 側は
-              すでに `Published` に進んでいる**（Markdown を書いた直後に進める順序のため）。
-              該当ページの `Status` を `Approved` に戻して再実行するか、ローカルで記事の
-              `## imo` に手で書いて commit する
+              → `daily.yml` と同じ記事ファイルを同時に触った。**Notion 側は `Approved` の
+              まま**なので取りこぼしは無く、競合を解決すれば次回の実行（毎時 23 分）が拾う。
+              急ぐなら `git pull --rebase` して `gh workflow run publish.yml`
+            - **「Notion を Published に進める」ステップだけが失敗した**
+              → Markdown は main に入っているのでサイトは更新される。Notion 側の
+              `Status` が `Approved` のまま残るだけで、次回の実行が進める
             - **timeout（10 分）またはキャンセル**
               → 承認が大量に溜まっている。Notion のレート制限で 1 件あたり数百 ms かかる。
               ログの件数を見て、Notion 側で一部を `Draft` に戻して分割する

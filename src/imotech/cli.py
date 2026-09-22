@@ -651,9 +651,13 @@ def cmd_publish(settings: Settings, args: argparse.Namespace) -> int:
             path.write_text(updated, encoding="utf-8")
             applied += 1
             _p(f"  {path.name} に imo を差し込みました")
-            # Markdown を書いたあとに Notion を進める。逆順にすると、
-            # 書き込みに失敗したときに Notion だけ Published になって二度と拾えない
-            client.mark_published(page.page_id)
+            # ここで Notion を Published に進めてはいけない。commit と push が
+            # 成功したあとに、**もう一度このコマンドを実行した回**が進める
+            # （そのときは imo が入っているので下の already 分岐に入る）。
+            # ここで進めると、push が失敗したときに「Notion は Published なのに
+            # Markdown は未コミット」が残る。fetch_approved は Approved しか
+            # 引かないので、その記事は自動では永久に公開されない
+            # （docs/DESIGN.md 3.0b / .scratch/pipeline/M4-publish.md の完了条件）
 
         _p("")
         verb = "差し込む予定" if args.dry_run else "差し込み"
@@ -663,9 +667,16 @@ def cmd_publish(settings: Settings, args: argparse.Namespace) -> int:
         if skipped:
             _p("飛ばした分は Notion の Status を Approved のままにしてあります。")
             _p("原因を直してもう一度実行すれば処理されます。")
-        if applied or already:
+        if applied:
             _p("`cd site && npm run dev` で表示を確認してください。")
             _p("公開物は Git が正なので、確認できたら commit してください。")
+            _p(
+                "**commit したあともう一度このコマンドを実行すると、"
+                "Notion 側が Published に進みます**（commit 前に進めると、"
+                "commit できなかったときに二度と拾えなくなるため）。"
+            )
+        elif already:
+            _p("Notion 側を Published に進めました。")
 
         # 無人実行（.github/workflows/publish.yml）はこの終了コードだけを見て Issue を立てる。
         # 承認されたのに 1 件も反映できなかったのは、人が直すまで回復しない

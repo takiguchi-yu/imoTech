@@ -18,6 +18,9 @@ pnpm-debug.log*
 # environment variables
 .env
 .env.production
+# wrangler のローカルシークレット（`wrangler dev` が読む）
+.dev.vars
+.dev.vars.*
 
 # macOS-specific files
 .DS_Store

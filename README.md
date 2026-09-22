@@ -400,6 +400,23 @@ Actions からデプロイを叩かない。**Workers Builds の Git 連携**が
 
 4. `main` に push してビルドが走ることを確認する。走らない場合だけ Deploy Hook を追加する
 
+### ビルド回数
+
+Cloudflare Free は **月 500 ビルド・同時 1 ビルド**。**Workers Builds にパスフィルタは無い**
+（[設定できる項目](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)は
+Git アカウント・リポジトリ・ブランチ・ビルドコマンド・デプロイコマンド・ルートディレクトリ・
+ビルド変数だけ）。つまり `data/candidates.jsonl` だけが変わった commit でもビルドが走る。
+
+| 内訳 | 回数/月 |
+|---|---|
+| `daily.yml`（毎日 1 commit） | 30 |
+| `publish.yml`（承認が入った時間帯だけ commit する） | 承認した時間帯の数 × 30 |
+| 人が `main` に push した分 | 開発中は増える |
+
+**1 日 3 回の承認なら月 120 回**で収まる。毎時 1 件ずつ承認すると 750 回で枠を超えるので、
+承認はまとめて行うほうがよい。枠を使い切るとその月はデプロイが止まり、**Actions は成功する
+ので Issue も立たない**（気づく手段は Cloudflare のダッシュボードだけ）。
+
 ### ローカルでの確認
 
 ```bash

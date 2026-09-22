@@ -89,3 +89,20 @@ jobs:
       # （U+200B / U+FEFF などは trim() を通り抜ける）。
       - name: 未記入の記事が出力に含まれないこと
         run: node scripts/check-unpublished.mjs
+
+      # dist が空でも `wrangler deploy` は警告なく成功し、公開サイトの全 URL が
+      # 404 になる（実測: 空の dist で --dry-run が終了コード 0）。
+      # 存在しないのはエラーになるが「あるが空」は誰も検知しないので、ここで見る。
+      # 同時に wrangler.jsonc が読めることも確かめる — さもないと設定の誤りは
+      # Cloudflare 上のデプロイまで分からない
+      - name: 配信物と wrangler の設定を検証する
+        env:
+          WRANGLER_SEND_METRICS: "false"
+        run: |
+          set -euo pipefail
+          test -f dist/index.html
+          pages=$(find dist -name '*.html' | wc -l | tr -d ' ')
+          echo "dist の HTML: ${pages} ファイル"
+          # 記事が 1 本も公開されていなくても / と /about と /privacy は出る
+          test "$pages" -ge 3
+          npx wrangler deploy --dry-run

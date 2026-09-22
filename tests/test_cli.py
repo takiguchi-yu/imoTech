@@ -459,14 +459,33 @@ def test_publishは承認0件なら0を返す(tmp_path, monkeypatch, capsys):
     assert client.published == []
 
 
-def test_publishはimoを差し込めたら0を返す(tmp_path, monkeypatch):
+def test_publishはimoを差し込んだ回にはNotionを進めない(tmp_path, monkeypatch):
+    # commit する前に Published にすると、commit できなかったときに
+    # 「Notion は Published なのに Markdown は未コミット」が残り、
+    # fetch_approved が二度と返さないのでその記事は永久に公開されない
     path, h = _write_article_for(tmp_path, "2026-01-01-a", "https://e.com/a")
     page = ApprovedPage(page_id="p1", url_hash=h, slug="2026-01-01-a", imo="所感です。")
     settings, args, client = _publish_env(tmp_path, monkeypatch, approved=[page])
     assert cmd_publish(settings, args) == 0
-    # Markdown に反映され、Notion 側も Published に進む
     assert "所感です。" in path.read_text(encoding="utf-8")
-    assert client.published == ["p1"]
+    assert client.published == []
+
+
+def test_publishは2回目の実行でNotionを進める(tmp_path, monkeypatch):
+    # commit と push が済んだあとに、もう一度実行して確定させる形
+    # （publish.yml はこの順でステップを並べている）
+    path, h = _write_article_for(tmp_path, "2026-01-01-a", "https://e.com/a")
+    page = ApprovedPage(page_id="p1", url_hash=h, slug="2026-01-01-a", imo="所感です。")
+    settings, args, client = _publish_env(tmp_path, monkeypatch, approved=[page])
+    assert cmd_publish(settings, args) == 0
+    assert client.published == []
+
+    # 2 回目。Markdown には既に imo が入っているので already 分岐に入る
+    settings2, args2, client2 = _publish_env(tmp_path, monkeypatch, approved=[page])
+    assert cmd_publish(settings2, args2) == 0
+    assert client2.published == ["p1"]
+    # 2 回目でも Notion の値で上書きしない
+    assert "所感です。" in path.read_text(encoding="utf-8")
 
 
 def test_publishは承認を全件飛ばしたら1を返す(tmp_path, monkeypatch, capsys):
@@ -488,7 +507,8 @@ def test_publishは一部でも反映できれば0を返す(tmp_path, monkeypatc
     settings, args, client = _publish_env(tmp_path, monkeypatch, approved=[ok, ng])
     assert cmd_publish(settings, args) == 0
     assert "所感です。" in path.read_text(encoding="utf-8")
-    assert client.published == ["p1"]
+    # 差し込んだ回では Notion を進めない（commit 後の 2 回目で進む）
+    assert client.published == []
 
 
 def test_publishはローカルのimoを優先してStatusだけ進める(tmp_path, monkeypatch, capsys):
