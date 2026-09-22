@@ -609,15 +609,26 @@ def cmd_publish(settings: Settings, args: argparse.Namespace) -> int:
             # 人が手で書いた imo を Notion の値で消さない
             handwritten = imo_section_text(md)
             if handwritten:
+                # プレースホルダのコメント行を消し忘れたまま所感を書き足した状態。
+                # サイト側のゲートはこの記事を公開から外す（site/src/lib/imo.ts）。
+                # ここで Published に進めると fetch_approved が二度と返さず、
+                # 公開もされないまま誰も気づけない。Approved のまま残して次回に回す
+                if not imo_of(md):
+                    skipped += 1
+                    _p(
+                        f"  [warn] {path.name} はプレースホルダのコメント行が"
+                        "残っているため、サイトにはまだ出ません。その行を消してください。",
+                        err=True,
+                    )
+                    _p(
+                        "         Notion の Status は Approved のままにしてあります"
+                        "（消してから再実行すれば反映されます）。",
+                        err=True,
+                    )
+                    continue
                 already += 1
                 _p(f"  {path.name} はローカルの imo を優先しました")
                 _p("      （Notion の imo は取り込んでいません）")
-                if not imo_of(md):
-                    _p(
-                        "      ※ プレースホルダのコメント行が残っているため、"
-                        "サイトにはまだ出ません。その行を消してください。",
-                        err=True,
-                    )
                 if not args.dry_run:
                     client.mark_published(page.page_id)
                 continue
@@ -664,8 +675,10 @@ def cmd_publish(settings: Settings, args: argparse.Namespace) -> int:
         if not args.dry_run and skipped and not applied and not already:
             _p(
                 f"承認された {len(approved)} 件すべてを飛ばしました。"
-                "Notion 側の Slug の書き換え、compose 前の記事、フロントマターの破損の"
-                "いずれかが疑われます。",
+                "Notion 側の Slug の書き換え、compose 前の記事、フロントマターの破損、"
+                "slug 衝突による別名保存（`<slug>-<hash6>.md`）、"
+                "プレースホルダの消し忘れのいずれかが疑われます。"
+                "件ごとの理由は上の [warn] 行を見てください。",
                 err=True,
             )
             return 1

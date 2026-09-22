@@ -20,7 +20,7 @@ from imotech.models import (
     Story,
 )
 from imotech.notion import NotionBlockLimitError, NotionError
-from imotech.render import set_imo, write_article
+from imotech.render import IMO_PROMPT, set_imo, write_article
 from imotech.store import CandidateStore
 from imotech.urlhash import url_hash
 
@@ -510,3 +510,57 @@ def test_publishはdry_runなら全件飛ばしても0を返す(tmp_path, monkey
     settings, args, client = _publish_env(tmp_path, monkeypatch, approved=[page], dry_run=True)
     assert cmd_publish(settings, args) == 0
     assert client.published == []
+
+
+def test_publishはプレースホルダが残っていたらStatusを進めない(tmp_path, monkeypatch, capsys):
+    # プレースホルダ行を消さずに所感を書き足した状態。行選択のミスで普通に起きる。
+    # サイト側のゲートはこの記事を公開から外すので、Notion を Published に進めると
+    # fetch_approved が二度と返さず、公開もされないまま誰も気づけない
+    path, h = _write_article_for(tmp_path, "2026-01-01-a", "https://e.com/a")
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            IMO_PROMPT, IMO_PROMPT + "\n\n消し忘れたまま書いた所感。"
+        ),
+        encoding="utf-8",
+    )
+    page = ApprovedPage(page_id="p1", url_hash=h, slug="2026-01-01-a", imo="Notion の所感。")
+    settings, args, client = _publish_env(tmp_path, monkeypatch, approved=[page])
+    # 全件がこれなら「1 件も反映できなかった」— 人が直すまで回復しない
+    assert cmd_publish(settings, args) == 1
+    err = capsys.readouterr().err
+    assert "プレースホルダ" in err and "Approved のまま" in err
+    # Approved のまま残すので、消してから再実行すれば拾える
+    assert client.published == []
+    assert client.closed
+
+
+def test_publishはNotion未設定なら2を返す(tmp_path, monkeypatch, capsys):
+    settings = Settings(
+        candidates_path=tmp_path / "c.jsonl",
+        articles_dir=tmp_path / "articles",
+        notion_token="",
+        notion_database_id="",
+    )
+    args = build_parser().parse_args(["publish"])
+    assert cmd_publish(settings, args) == 2
+    assert "NOTION_TOKEN" in capsys.readouterr().err
+
+
+def test_publishはNotionの呼び出しが失敗したら1を返す(tmp_path, monkeypatch, capsys):
+    class _Broken(_FakeNotionClient):
+        def fetch_approved(self, _ds):
+            raise NotionError("HTTP 403 (restricted_resource)")
+
+    client = _Broken([])
+    monkeypatch.setattr("imotech.cli._notion_client", lambda _s: client)
+    settings = Settings(
+        candidates_path=tmp_path / "c.jsonl",
+        articles_dir=tmp_path / "articles",
+        notion_token="t",
+        notion_database_id="d",
+    )
+    args = build_parser().parse_args(["publish"])
+    assert cmd_publish(settings, args) == 1
+    assert "Notion の呼び出しに失敗しました" in capsys.readouterr().err
+    # 例外で抜けても finally でクライアントを閉じる
+    assert client.closed

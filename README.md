@@ -21,7 +21,7 @@ Hacker News で議論を呼んだ英語圏のテック記事を、**元記事の
 | **ローカル通し（Notion を飛ばして localhost まで）** | **完了** — `compose` が Markdown を書き、Astro でサイトが出る |
 | **M2 Notion 連携** | **完了** — `notion-setup` / `notion-sync` / `publish`。Notion を使わない運用も引き続き成立する |
 | **M3 GitHub Actions で定時実行** | **完了** — 手動実行・失敗通知・自動 commit を実測済み（完了条件 24 件のうち 22 件）。cron の初回実行は 2026-09-23 06:17 JST |
-| M4 公開（Cloudflare Workers） | サイト自体は完成。デプロイ連携が未 |
+| M4 公開（Cloudflare Workers） | コードは完成（`publish.yml` / `site/wrangler.jsonc`）。Cloudflare のプロジェクト作成と通し確認が残り |
 
 ## セットアップ
 
@@ -50,7 +50,7 @@ SSL_CERT_FILE="$AWS_CA_BUNDLE" uv sync
 
 ```bash
 export SSL_CERT_FILE="$AWS_CA_BUNDLE"
-uv run imotech publish --dry-run
+uv run imotech collect      # Hacker News に出るだけ。API キーも Notion も要らない
 ```
 
 `AWS_CA_BUNDLE` / `REQUESTS_CA_BUNDLE` / `NODE_EXTRA_CA_CERTS` に同じパスが入っていることが多い。
@@ -296,10 +296,13 @@ gh secret list                   # 名前と更新日だけが見える
 
 ```bash
 gh issue list --label pipeline-failure           # 立っている Issue
-gh run list --workflow daily.yml --limit 5       # 直近の実行
+gh run list --workflow daily.yml --limit 5       # 直近の実行（publish.yml も同じように見る）
 gh run view <id> --log-failed                    # 失敗したステップのログ
 gh workflow run daily.yml                        # 直したら回し直す
 ```
+
+Issue のタイトルは**最初に失敗したワークフロー名**で固定される。以降は別のワークフローの
+失敗も同じ Issue にコメントされるので、どれが失敗したかは**本文の表**を見る。
 
 直したら Issue を close する。次の失敗で新しい Issue が立つ。
 
@@ -319,7 +322,7 @@ gh workflow run daily.yml                        # 直したら回し直す
 
 | 条件 | 終了コード | 直し方 |
 |---|---|---|
-| `NOTION_TOKEN` / `NOTION_DATABASE_ID` が未設定 | 2 | Notion を使わない運用では `publish` を回す必要がない |
+| `NOTION_TOKEN` / `NOTION_DATABASE_ID` が未設定 | 2 | Notion を使う運用なら `gh secret set NOTION_TOKEN`。**使わない運用に切り替えたなら `gh workflow disable publish.yml`** で止める（毎時走るので、放置すると失敗 Issue に毎時コメントが積む） |
 | Notion の呼び出しが失敗 | 1 | トークン失効、DB ID の誤り、インテグレーションが DB に未接続 |
 | 承認された記事を**全件**飛ばした | 1 | Notion 側で `Slug` が書き換えられた、まだ `compose` していない、フロントマターが壊れている。直すまで `Status` は `Approved` のままなので、直して再実行すれば拾える |
 
@@ -361,8 +364,13 @@ Actions からデプロイを叩かない。**Workers Builds の Git 連携**が
 
 ### 初回のセットアップ（ダッシュボード操作）
 
-1. Cloudflare にログインし、**Workers & Pages → Create → Workers → Import a repository** で
-   このリポジトリを選ぶ
+0. [Cloudflare のアカウントを作る](https://dash.cloudflare.com/sign-up)（Free で足りる）
+1. [Workers & Pages](https://dash.cloudflare.com/?to=/:account/workers-and-pages) →
+   **Create → Workers → Import a repository** でこのリポジトリを選ぶ
+
+   途中で GitHub の許可ダイアログが出る。**そこでこのリポジトリを選んで許可する**
+   （Cloudflare の GitHub App がインストールされる）。選ばないと次の一覧に出てこない
+
 2. ビルド設定をこうする（モノレポなので**ルートディレクトリの指定が要る**）
 
    | 項目 | 値 |
@@ -370,16 +378,25 @@ Actions からデプロイを叩かない。**Workers Builds の Git 連携**が
    | Root directory | `site` |
    | Build command | `npm run build` |
    | Deploy command | `npx wrangler deploy`（既定のまま） |
+   | Build variables | `SITE_URL` = `https://imotech.<アカウントのサブドメイン>.workers.dev` |
 
    出力ディレクトリの設定項目は無い。[`site/wrangler.jsonc`](./site/wrangler.jsonc) の
    `assets.directory` が `./dist` を指しており、それが使われる
 
-3. 作成後に `https://imotech.<アカウントのサブドメイン>.workers.dev` が発行される。
-   **その URL を Build variables の `SITE_URL` に設定して、もう一度ビルドする**
+   **Worker 名は `imotech` にする。** 公式が "The Worker name in the Cloudflare dashboard
+   must match the `name` in the Wrangler configuration file in the specified root directory,
+   or the build will fail." と明記している（[Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/)）
 
-   これを忘れるとビルドが落ちる。`site/astro.config.mjs` は `CI` 環境変数がある状態で
-   `SITE_URL` が無いと意図的に例外を投げる — 入れ忘れると `localhost` の URL が
-   sitemap と RSS に焼き込まれたまま公開されてしまうため
+   サブドメインは Workers & Pages のページに出ている。**先に確認して手順 2 で
+   `SITE_URL` を入れておけば、1 回目のビルドから通る。**
+
+3. `SITE_URL` を入れずに作ってしまったら、**1 回目のビルドは落ちる**。
+   `site/astro.config.mjs` は `CI` 環境変数がある状態で `SITE_URL` が無いと意図的に例外を
+   投げる（入れ忘れると `localhost` の URL が sitemap と RSS に焼き込まれたまま公開される
+   ため）。その場合は発行された URL を確認して、
+
+   - **Settings → Build → Variables and Secrets** に `SITE_URL` = その URL を足す
+   - **Deployments** → 一番上のビルド → **Retry deployment**
 
 4. `main` に push してビルドが走ることを確認する。走らない場合だけ Deploy Hook を追加する
 
@@ -387,9 +404,25 @@ Actions からデプロイを叩かない。**Workers Builds の Git 連携**が
 
 ```bash
 cd site
+npm install                              # 初回だけ
 npm run build && npx wrangler dev        # dist を Workers のランタイムで配る
 npx wrangler deploy --dry-run            # 設定だけ検証する（デプロイしない）
 ```
+
+### サイトが更新されないとき
+
+止まりうる場所が 3 つある。上から順に切る。
+
+```bash
+uv run imotech status                                     # 1. imo が入っているか
+gh run list --workflow publish.yml --limit 5              # 2. publish が走ったか
+git log --oneline -5 -- site/src/content/articles         #    commit が入ったか
+```
+
+3 つ目は Cloudflare 側。**Workers & Pages → `imotech` → Deployments** で、その push に
+対応するビルドが走ったかとビルドログを見る。走っていなければ Git 連携が切れているので、
+Settings → Build から繋ぎ直す（それでも走らなければ Deploy Hook を追加して
+`publish.yml` から叩く）。
 
 ## 開発
 

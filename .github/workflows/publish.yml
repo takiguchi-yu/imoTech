@@ -82,7 +82,9 @@ jobs:
           for attempt in 1 2 3; do
             if ! git pull --rebase origin "${GITHUB_REF_NAME}"; then
               git rebase --abort || true
-              echo "::error::rebase が競合しました。ローカルで解決してから push し直してください"
+              echo "::error::rebase が競合しました。この時点で Notion 側は既に Published に" \
+                   "進んでいます。該当ページの Status を Approved に戻して再実行するか、" \
+                   "ローカルで記事の ## imo に手で書いて commit してください"
               exit 1
             fi
             if git push origin "HEAD:${GITHUB_REF_NAME}"; then
@@ -90,7 +92,9 @@ jobs:
             fi
             echo "push が弾かれました。取り込み直します（${attempt} 回目）"
           done
-          echo "::error::3 回試しても push できませんでした"
+          echo "::error::3 回試しても push できませんでした。Notion 側は既に Published に" \
+               "進んでいます。該当ページの Status を Approved に戻して再実行するか、" \
+               "ローカルで記事の ## imo に手で書いて commit してください"
           exit 1
 
       # timeout（10 分）や手動キャンセルでは failure() は真にならない。
@@ -104,15 +108,24 @@ jobs:
           causes: |
             上から順に疑う。ログの stderr に、どれに当たったかが出ている。
 
+            - **Secrets が未設定**（ログに「NOTION_TOKEN と NOTION_DATABASE_ID が未設定です」／終了コード 2）
+              → Notion を使う運用なら `gh secret set NOTION_TOKEN` と `gh secret set NOTION_DATABASE_ID`。
+              Notion を使わない運用に切り替えたのなら **`gh workflow disable publish.yml`** で止める
+              （このワークフローは毎時走るので、放置すると毎時この Issue にコメントが積む）
             - **Notion が 403 / 404**（ログに「Notion の呼び出しに失敗しました」）
               → `NOTION_DATABASE_ID` の誤り、トークン失効、インテグレーションが DB に未接続。
-              `gh secret list` で更新日を確認し `gh secret set NOTION_TOKEN`
+              `gh secret list` で更新日を確認する
             - **承認された記事を全件飛ばした**（ログに「すべてを飛ばしました」）
-              → Notion 側で `Slug` が書き換えられた、その記事をまだ `compose` していない、
-              記事のフロントマターが壊れている。ログに記事ごとの理由が出ている。
-              直すまで `Status` は `Approved` のままなので、直したら再実行すれば拾える
-            - **`git pull --rebase` が競合**
-              → `daily.yml` と同じ記事ファイルを同時に触った。`git pull --rebase` で解決して
-              から `gh workflow run publish.yml`
+              → ログの `[warn]` 行に記事ごとの理由が出ている。よくあるのは 4 つ:
+              (a) Notion 側で `Slug` が書き換えられた、(b) その記事をまだ `compose` していない、
+              (c) `## imo` のプレースホルダのコメント行を消し忘れている、
+              (d) slug が衝突して `<slug>-<hash6>.md` として保存されている。
+              いずれも `Status` は `Approved` のまま残るので、直したら再実行すれば拾える
+            - **`git pull --rebase` が競合、または push が 3 回弾かれた**
+              → `daily.yml` と同じ記事ファイルを同時に触った。**この時点で Notion 側は
+              すでに `Published` に進んでいる**（Markdown を書いた直後に進める順序のため）。
+              該当ページの `Status` を `Approved` に戻して再実行するか、ローカルで記事の
+              `## imo` に手で書いて commit する
             - **timeout（10 分）またはキャンセル**
-              → 承認が大量に溜まっている。ログの件数を見て、必要なら分割して実行する
+              → 承認が大量に溜まっている。Notion のレート制限で 1 件あたり数百 ms かかる。
+              ログの件数を見て、Notion 側で一部を `Draft` に戻して分割する
