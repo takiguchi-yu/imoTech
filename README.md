@@ -23,7 +23,7 @@ Hacker News で議論を呼んだ英語圏のテック記事を、**元記事の
 | **ローカル通し（Notion を飛ばして localhost まで）** | **完了** — `compose` が Markdown を書き、Astro でサイトが出る |
 | **M2 Notion 連携** | **完了** — `notion-setup` / `notion-sync` / `publish`。Notion を使わない運用も引き続き成立する |
 | **M3 GitHub Actions で定時実行** | **完了** — 手動実行・失敗通知・自動 commit を実測済み（完了条件 24 件のうち 22 件）。cron の初回実行は 2026-09-23 06:17 JST |
-| **M4 公開（Cloudflare Workers）** | **サイトは公開済み**（https://imotech.y-takiguti.workers.dev）。`CLOUDFLARE_API_TOKEN` の登録と、Notion 承認の通し確認が残り |
+| **M4 公開（Cloudflare Workers）** | **完了** — 承認から公開まで通した（完了条件 49 件のうち 48 件）。cron の初回実行だけ時間待ち |
 
 ## セットアップ
 

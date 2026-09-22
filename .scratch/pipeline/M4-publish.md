@@ -47,7 +47,7 @@ Workers Builds の Git 連携がそれを検知してサイトをビルド・公
       触らず、commit と push が成功してから 2 回目を実行し、その回が `mark_published` を呼ぶ。
       1 回目で進めると、push が失敗したときに「Notion は Published なのに Markdown は未コミット」
       が残り、`fetch_approved` は Approved しか引かないのでその記事は自動では永久に公開されない）
-- [ ] **`imo` が空のまま Approved にされたページは公開されない**ことを、実際に空で Approved にして確認した
+- [x] **`imo` が空のまま Approved にされたページは公開されない**ことを、実際に空で Approved にして確認した
 
 ### publish.yml
 - [x] `.github/workflows/publish.yml` を作り、`schedule: - cron: "23 * * * *"` と `workflow_dispatch` を設定した
@@ -80,7 +80,7 @@ Workers Builds の Git 連携がそれを検知してサイトをビルド・公
 - [x] `site/wrangler.jsonc` に `assets` の設定を書いた
 - [x] ~~Cloudflare ダッシュボードで Workers プロジェクトを作り、**GitHub リポジトリと連携**した~~
       → **Git 連携は使わない。** 代わりに次の 3 つを用意する
-- [ ] 「Edit Cloudflare Workers」テンプレートで API トークンを発行し、`gh secret set CLOUDFLARE_API_TOKEN` した
+- [x] 「Edit Cloudflare Workers」テンプレートで API トークンを発行し、`gh secret set CLOUDFLARE_API_TOKEN` した
 - [x] Account ID を `gh secret set CLOUDFLARE_ACCOUNT_ID` した
 - [x] `*.workers.dev` のサブドメインを確認し、`gh variable set SITE_URL` した
 - [x] ビルドとデプロイを `publish.yml` のステップにした
@@ -102,13 +102,14 @@ Workers Builds の Git 連携がそれを検知してサイトをビルド・公
       収益化（ads.txt はルートドメイン起点でクロールされる）に必要になるのは M5
 
 ### 通し
-- [ ] Notion で下書き 1 件に `imo` を書き、`Status` を `Approved` にした
-- [ ] `publish.yml` を手動実行し、`site/src/content/articles/` に Markdown が commit された
-- [ ] Notion の該当ページが `Published` になり、`Published At` が入った
-- [ ] Workers のビルドが走り、**公開 URL で記事が読めた**
-- [ ] `/rss.xml` と `/sitemap-index.xml` に新しい記事が含まれている
-- [ ] 記事末尾に AI 生成の開示が表示されている
+- [x] Notion で下書き 1 件に `imo` を書き、`Status` を `Approved` にした
+- [x] `publish.yml` を手動実行し、`site/src/content/articles/` に Markdown が commit された
+- [x] Notion の該当ページが `Published` になり、`Published At` が入った
+- [x] Workers のビルドが走り、**公開 URL で記事が読めた**
+- [x] `/rss.xml` と `/sitemap-index.xml` に新しい記事が含まれている
+- [x] 記事末尾に AI 生成の開示が表示されている
 - [ ] cron（毎時 23 分）で自動実行されたことを Actions の履歴で確認した
+      **時間待ち。** 確認方法: `gh run list --workflow publish.yml --json event,conclusion,createdAt --jq '.[] | select(.event == "schedule")'`
 
 ## 見つけたときの状況
 
@@ -349,3 +350,55 @@ SITE_URL  https://imotech.y-takiguti.workers.dev
 - **`SITE_URL` のガードが Actions で効くかは確認済みだが、Workers Builds では未確認。**
   Git 連携を使わない方式にしたので、この経路自体が無くなった
 - cron（毎時 23 分）での自動実行は時間待ち
+
+---
+
+## 通しが通った（2026-09-22 04:47 UTC）
+
+`publish.yml` を手動実行（run `35688153336`）。**全 10 ステップが success**。
+
+```
+5. 承認された記事を反映する      → success
+6. 反映を commit して push する  → success
+7. Node をセットアップ           → success
+8. サイトをビルドする            → success
+9. Cloudflare にデプロイする     → success
+10. Notion を Published に進める → success
+11. 失敗を通知する               → skipped
+```
+
+commit: `47dfa2a chore: publish approved articles (2026-09-22)`（`github-actions[bot]` 名義、
+`2026-09-22-private-equity-medical-practices-ban.md` の 1 行だけが変わった＝`## imo` の差し込み）。
+
+### 公開結果の実測
+
+```
+$ curl -o /dev/null -w "%{http_code}" https://imotech.y-takiguti.workers.dev/articles/2026-09-22-private-equity-medical-practices-ban/
+200
+$ curl .../articles/.../ | grep -oE "なるほど"
+なるほど                      # imo が表示されている
+$ curl .../articles/.../ | grep -oE "運営者が執筆"
+運営者が執筆                  # AI 生成の開示が表示されている
+$ curl .../rss.xml | grep -c private-equity
+1
+$ curl .../sitemap-0.xml | grep -c private-equity
+1
+```
+
+### Notion 側の実測（`query` で全 7 件を取得）
+
+| Status | imo | Published At | 判定 |
+|---|---|---|---|
+| `Published` | 有り | `2026-09-22T04:47:00.000+00:00` | **承認から公開まで通った** |
+| `Approved` | **空** | なし | **imo が空のまま Approved にしたページは公開されない**（`fetch_approved` の `is_not_empty` が除外し、サイトにも出ない） |
+| `Draft` × 5 | 空 | なし | 未承認のまま |
+
+**完了条件「`imo` が空のまま Approved にされたページは公開されない」を実際に空で Approved に
+して確認できた。** Status は `Approved` のまま残り、imo を書けば次回の実行が拾う。
+
+`publish` の再実行では「承認済み（imo 記入済み）: 0 件」になる（Published に進んだ 1 件は
+`fetch_approved` が返さず、imo が空の 1 件はフィルタで除外される）。
+
+### 残っているのは cron の実行確認だけ
+
+次回の cron は毎時 23 分。`gh run list --workflow publish.yml` で `event == "schedule"` を探す。
