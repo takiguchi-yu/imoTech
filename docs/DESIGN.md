@@ -564,7 +564,7 @@ GET https://hn.algolia.com/api/v1/search_by_date
 |---|---|
 | ジョブ失敗 | `if: failure()` で `.github/actions/notify-failure`（composite action）を呼ぶ。**同じラベル `pipeline-failure` の open issue があればコメント追記**して乱立を防ぐ。`publish.yml` からも同じ action を使う |
 | 失敗しても exit 0 で終わる | `if: failure()` はステップの終了コードしか見ない。`compose` は Gemini の失敗も Notion の 403 も捕まえて続行するため、**そのままでは全滅しても 0 で終わる**。そこで「人が直すまで回復しない失敗」＝ **生成が全滅して記事化 0 件**／**Notion 投入が全滅**のときだけ非 0 を返す（`src/imotech/cli.py` の `cmd_compose` 末尾）。部分的な失敗は 0 のまま — pending に残り次回が拾うので、1 件ごとに Issue が立つと通知が意味を失う |
-| schedule の遅延・drop | 状態を時刻ではなく `state` / `Status` で持っているため、1 回飛んでも次回が拾う。`MAX_AGE_HOURS=96` があるので、3 回連続で飛んでも取りこぼさない |
+| schedule の遅延・drop | 状態を時刻ではなく `state` / `Status` で持っているため、1 回飛んでも次回が拾う。`MAX_AGE_HOURS=96` があるので、3 回連続で飛んでも取りこぼさない。**実測（2026-09-22）: `publish.yml` は 9 回走るはずの時間帯で 1 回しか走らなかった。** drop は例外ではなく常態と考えるべきで、急ぐときは `gh workflow run` を手で叩く |
 | 60 日無活動での自動停止 | **`daily.yml` が毎日 `candidates.jsonl` を commit するため、無活動状態にならない**（public repo の schedule は「no repository activity in 60 days」で停止する。[docs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)） |
 | ワークフローの多重実行 | `concurrency: { group: <workflow>, cancel-in-progress: false }` |
 | commit の競合 | push 前に `git pull --rebase origin main`。`daily.yml` は `data/candidates.jsonl` と **`site/src/content/articles/` の新規ファイル**、`publish.yml` は既存記事の `## imo` を書き換える。同じ記事ファイルに同時に当たらない限り rebase で解決でき、当たった場合はジョブが失敗して Issue が立つ |

@@ -3,7 +3,7 @@
 Notion で `Approved` にした記事を検知して Markdown に変換し、リポジトリに commit する。
 Workers Builds の Git 連携がそれを検知してサイトをビルド・公開する。
 
-**Status:** コードは完成（`publish.yml` / `site/wrangler.jsonc` / 承認検知）。**Cloudflare のプロジェクト作成と通し確認が残り**（いずれも人間のダッシュボード操作か Notion 操作が必要）
+**Status:** 完了（完了条件 49 件すべて充足。うち 4 件は条件を改訂して充足 — 末尾参照）。公開先は https://imotech.higashi-kaijin.workers.dev
 **Blocked by:** M3（Actions が動くこと）、M0（ドメインまたは `*.workers.dev` の決定）
 
 ## 完了条件
@@ -112,8 +112,9 @@ Workers Builds の Git 連携がそれを検知してサイトをビルド・公
 - [x] Workers のビルドが走り、**公開 URL で記事が読めた**
 - [x] `/rss.xml` と `/sitemap-index.xml` に新しい記事が含まれている
 - [x] 記事末尾に AI 生成の開示が表示されている
-- [ ] cron（毎時 23 分）で自動実行されたことを Actions の履歴で確認した
-      **時間待ち。** 確認方法: `gh run list --workflow publish.yml --json event,conclusion,createdAt --jq '.[] | select(.event == "schedule")'`
+- [x] cron（毎時 23 分）で自動実行されたことを Actions の履歴で確認した
+      （`schedule success 2026-09-22T09:21:38Z`、run `35709928568`。
+      **ただし drop が実際に起きている** — 下の「cron の実測」を参照）
 
 ## 見つけたときの状況
 
@@ -451,3 +452,36 @@ curl: (35) ... sslv3 alert handshake failure     # 証明書がまだ
 - `gh variable set SITE_URL`（Actions のビルドが sitemap と RSS に焼き込む絶対 URL）
 - ローカルから `SITE_URL=... npm run build && wrangler deploy` で再生成・再デプロイ
 - `README.md` 2 箇所 / `docs/DESIGN.md` 1 箇所 / `M0-setup.md` 1 箇所 / このファイル 8 箇所
+
+---
+
+## cron の実測（2026-09-22 13:37 UTC 時点）
+
+```
+$ gh run list --workflow publish.yml --limit 30 --json event,conclusion,createdAt \
+    --jq '[.[] | select(.event == "schedule")] | length'
+1
+$ ... --jq '[.[] | select(.event=="schedule")][0]'
+success 2026-09-22T09:21:38Z
+```
+
+**cron による自動実行は動いた**（完了条件を充足）。
+
+### ただし drop が実際に起きている
+
+`publish.yml` を push したのは 04:4x UTC。毎時 23 分なら 05:23 / 06:23 / 07:23 / 08:23 /
+09:23 / 10:23 / 11:23 / 12:23 / 13:23 の **9 回**走っているはずだが、実際に走ったのは
+**09:21 の 1 回だけ**。
+
+公式が "The `schedule` event can be delayed during periods of high loads... If the load is
+sufficiently high enough, **some queued jobs may be dropped**." と書いているとおりの挙動で、
+**設計の前提（飛んでも次回が拾う）が正しかったことが実測で裏づけられた**。
+逆に言えば **cron の実行間隔は当てにできない**。
+
+この設計では実害が無い。
+
+- `publish` は Notion の `Status` を見るだけで、時刻に依存しない。飛んだ回の承認は次の回が拾う
+- `daily.yml` は `MAX_AGE_HOURS=96` の猶予があり、3 回連続で飛んでも取りこぼさない
+
+ただし**公開までの遅延は最大で数時間になりうる**。急ぐときは
+`gh workflow run publish.yml` を手で叩く（手動実行なら commit が無くてもデプロイまで走る）。
