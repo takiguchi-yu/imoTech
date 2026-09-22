@@ -3,7 +3,7 @@
 Notion で `Approved` にした記事を検知して Markdown に変換し、リポジトリに commit する。
 Workers Builds の Git 連携がそれを検知してサイトをビルド・公開する。
 
-**Status:** サイト本体は完成（ローカルで動作確認済み）。Notion 検知・publish.yml・Cloudflare 連携が未着手
+**Status:** コードは完成（`publish.yml` / `site/wrangler.jsonc` / 承認検知）。**Cloudflare のプロジェクト作成と通し確認が残り**（いずれも人間のダッシュボード操作か Notion 操作が必要）
 **Blocked by:** M3（Actions が動くこと）、M0（ドメインまたは `*.workers.dev` の決定）
 
 ## 完了条件
@@ -11,7 +11,7 @@ Workers Builds の Git 連携がそれを検知してサイトをビルド・公
 ### Astro サイトの骨組み
 - [x] `site/` に `npm create astro@latest` でプロジェクトを作った（最小構成、TypeScript）
 - [x] `site/src/content.config.ts` に `articles` コレクションを定義し、[docs/DESIGN.md 2.5](../../docs/DESIGN.md) のフロントマターを zod スキーマで型付けした
-- [ ] `site/src/content/articles/` に手書きのサンプル記事を 1 本置き、`npm run build` が通った
+- [x] `site/src/content/articles/` に手書きのサンプル記事を 1 本置き、`npm run build` が通った
 - [x] `site/src/pages/index.astro`（記事一覧、公開日の降順）を作った
 - [x] `site/src/pages/articles/[...slug].astro`（記事詳細）を作った
 - [x] `site/src/pages/tags/[tag].astro`（タグ別一覧）を作った
@@ -35,32 +35,58 @@ Workers Builds の Git 連携がそれを検知してサイトをビルド・公
 - [x] `tests/test_render.py` で、引用符とコロンを含むタイトルでフロントマターが壊れないことを確認した
 
 ### 承認の検知
-- [ ] `src/imotech/notion.py` に `fetch_approved()` を実装し、フィルタを `Status == Approved` **かつ** `imo is_not_empty` にした
-- [ ] `last_edited_time` を使っていないことを確認した（ページ単位でしか取れず、ワークフローが飛ぶと取りこぼすため）
-- [ ] ページ本文のブロックを取得して要旨・論調を復元する実装にした（ページネーションに対応する）
-- [ ] commit 後に `Status` を `Published` に、`Published At` を現在時刻に更新する実装にした
+- [x] `src/imotech/notion.py` に `fetch_approved()` を実装し、フィルタを `Status == Approved` **かつ** `imo is_not_empty` にした
+- [x] `last_edited_time` を使っていないことを確認した（ページ単位でしか取れず、ワークフローが飛ぶと取りこぼすため）
+- [x] ~~ページ本文のブロックを取得して要旨・論調を復元する実装にした（ページネーションに対応する）~~
+      → **不要。M2 で「Notion は記事本文の正ではない」と決めた**（`.scratch/pipeline/M2-notion.md`
+      の「決めたこと」、`docs/DESIGN.md` 3.0b）。本文は `compose` が書いた Markdown が正で、
+      Notion からは人が書いた `imo` だけを取り出す。Notion のブロックを読む実装は存在せず、
+      設計上も作らない（`grep -rn "/blocks/" src/imotech/notion.py` は書き込み 1 件だけ）
+- [x] commit 後に `Status` を `Published` に、`Published At` を現在時刻に更新する実装にした
+      （**2 段構成にした。** 1 回目の実行で Markdown に `imo` を差し込むだけにして Notion は
+      触らず、commit と push が成功してから 2 回目を実行し、その回が `mark_published` を呼ぶ。
+      1 回目で進めると、push が失敗したときに「Notion は Published なのに Markdown は未コミット」
+      が残り、`fetch_approved` は Approved しか引かないのでその記事は自動では永久に公開されない）
 - [ ] **`imo` が空のまま Approved にされたページは公開されない**ことを、実際に空で Approved にして確認した
 
 ### publish.yml
-- [ ] `.github/workflows/publish.yml` を作り、`schedule: - cron: "23 * * * *"` と `workflow_dispatch` を設定した
-- [ ] `permissions: { contents: write, issues: write }` / `concurrency: { group: publish }` / `timeout-minutes: 10` を設定した
-- [ ] `site/src/content/articles/<slug>.md` を書き、`git pull --rebase` してから push するステップを書いた
-- [ ] 同じ slug のファイルが既にあるとき、上書きせずスキップして Notion の Status だけ更新する実装にした
-- [ ] 承認が 0 件のとき、commit を試みずに正常終了することを確認した
-- [ ] 失敗時の Issue 起票を `.github/actions/notify-failure` で入れた（`daily.yml` と同じ composite action。`causes` だけ publish 用に差し替える）
-- [ ] `if: ${{ failure() || cancelled() }}` にした（timeout とキャンセルでは `failure()` が真にならない）
-- [ ] **`publish.yml` から `data/candidates.jsonl` を書かない**ことを確認した
+- [x] `.github/workflows/publish.yml` を作り、`schedule: - cron: "23 * * * *"` と `workflow_dispatch` を設定した
+- [x] `permissions: { contents: write, issues: write }` / `concurrency: { group: publish }` / `timeout-minutes: 10` を設定した
+- [x] `git pull --rebase` してから push するステップを書いた
+      （**`<slug>.md` を「書く」のは `compose` の仕事**で、`publish` は既存ファイルの `## imo` を
+      書き換えるだけ。M2 の決定どおり。push が弾かれたときに 3 回まで取り込み直す）
+- [x] 同じ slug のファイルが既にあるとき、上書きせずスキップして Notion の Status だけ更新する実装にした
+      （実装の対応物は「**ローカルに手書きの `imo` があれば Notion の値で上書きせず、Status だけ進める**」。
+      publish は新規ファイルを作らない設計なので、条件が想定していた「上書き」は起きない）
+- [x] **プレースホルダのコメント行が残っているページは Published に進めない**
+      （レビューで見つけた穴。消し忘れたまま所感を書き足した状態ではサイト側のゲートが記事を
+      公開から外すのに、`already` として成功に数えて Published にしていた。`fetch_approved` は
+      Approved しか引かないので、公開もされないまま二度と拾われない。Approved のまま残す）
+- [x] 承認が 0 件のとき、commit を試みずに正常終了することを確認した
+- [x] 失敗時の Issue 起票を `.github/actions/notify-failure` で入れた（`daily.yml` と同じ composite action。`causes` だけ publish 用に差し替える）
+- [x] `if: ${{ failure() || cancelled() }}` にした（timeout とキャンセルでは `failure()` が真にならない）
+- [x] **`publish.yml` から `data/candidates.jsonl` を書かない**ことを確認した
       （`store.save` は JSONL を全行書き直すため、`daily.yml` と同時に走ると rebase が
       行単位で解決できず競合する。publish が触るのは記事 Markdown と Notion だけに留める）
 
 ### Cloudflare Workers + Static Assets
-- [ ] `site/wrangler.jsonc` に `assets` の設定を書いた
+- [x] `site/wrangler.jsonc` に `assets` の設定を書いた
 - [ ] Cloudflare ダッシュボードで Workers プロジェクトを作り、**GitHub リポジトリと連携**した
-- [ ] ビルドコマンドを `npm run build`、出力ディレクトリを `dist` に設定した
+- [ ] ビルドコマンドを `npm run build` に設定した
+      （**出力ディレクトリの設定項目は Workers Builds に無い。** `site/wrangler.jsonc` の
+      `assets.directory: "./dist"` が担う。設定できるのは Git アカウント・リポジトリ・ブランチ・
+      ビルドコマンド・デプロイコマンド・ルートディレクトリ・ビルド変数だけ —
+      [configuration](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)）
+      **Worker 名は `imotech` にする必要がある**（公式が "The Worker name in the Cloudflare
+      dashboard must match the `name` in the Wrangler configuration file in the specified
+      root directory, or the build will fail." と明記）
 - [ ] ルートディレクトリを `site/` に設定した（モノレポ構成のため）
 - [ ] `main` への push で自動ビルドが走ることを確認した
 - [ ] **Deploy Hook が不要であることを確認した**（Git 連携で自動ビルドされるなら、Actions から叩く必要はない。走らない場合のみ Deploy Hook を追加し、URL を Secrets に置く）
-- [ ] 独自ドメインを設定した（M0 で取得済みの場合）
+- [ ] ~~独自ドメインを設定した（M0 で取得済みの場合）~~
+      → **該当しない。`*.workers.dev` で進めると決めた**（M0 の「ドメインを後回しにする場合は
+      `*.workers.dev` で進める判断を README に 1 行残す」に従い、README の「公開」節に記載）。
+      収益化（ads.txt はルートドメイン起点でクロールされる）に必要になるのは M5
 
 ### 通し
 - [ ] Notion で下書き 1 件に `imo` を書き、`Status` を `Approved` にした
@@ -172,3 +198,78 @@ cd site && CI=1 npm run build             → SITE_URL 未設定で非ゼロ終�
 スクラッチで imo を 1 件記入してビルド        → 9 ページ / RSS 1 件 / sitemap 9 URL / タグ 5 件
                                              未記入の記事は dist に一切出ない
 ```
+
+---
+
+## 実測の記録（2026-09-22）
+
+### コード側（完了したもの）
+
+```
+$ uv run ruff format --check . && uv run ruff check . && uv run pytest -q
+307 passed
+$ cd site && npm test && SITE_URL=https://example.invalid npm run build
+17 pass / 3 page(s) built
+$ node scripts/check-unpublished.mjs
+記事 7 件（うち imo 未記入 7 件）。出力への漏れはありません。
+$ WRANGLER_SEND_METRICS=false npx wrangler deploy --dry-run
+✨ Read 10 files from the assets directory .../site/dist
+$ uv run imotech publish --dry-run          # SSL_CERT_FILE を付けて実行
+Notion で承認済み（imo 記入済み）: 0 件 → exit 0
+```
+
+CI は `35684...`（`d8d6874`）で green。
+
+### レビューで見つけて直したもの
+
+| 深刻度 | 内容 |
+|---|---|
+| Blocker | **完了条件は「commit 後に Status を Published に」と書いていたが、実装は commit 前に進めていた。** push が失敗すると「Notion は Published なのに Markdown は未コミット」が残り、`fetch_approved` は Approved しか引かないのでその記事は自動では永久に公開されない。2 段構成にした |
+| Major | **プレースホルダのコメント行を消し忘れたまま所感を書き足した状態**で、公開されないのに Notion を Published に進めていた。Approved のまま残すようにした |
+| Blocker | Notion を使わない運用に切り替えると `publish.yml` が毎時 終了コード 2 で落ち、失敗 Issue に毎時コメントが積む。`gh workflow disable publish.yml` を案内した |
+| Major | **dist が空でも `wrangler deploy` は警告なく成功**し、公開サイトの全 URL が 404 になる（実測: 空の dist で `--dry-run` が終了コード 0）。CI で HTML の数と wrangler の設定を検証するようにした |
+| Major | Cloudflare の手順に、アカウント作成と GitHub App の許可（手順 0）が無く、上から実行すると手順 1 で止まった |
+| Major | 「サイトが更新されない」ときの切り分けが無かった（止まりうる 3 か所を順に切る節を追加） |
+| Major | TLS の疎通確認の例が `publish` で、Notion 未設定だとネットワークに触る前に終わっていた。`collect` に変えた |
+
+### 条件を改訂した 4 件
+
+| 元の条件 | どうしたか | 理由 |
+|---|---|---|
+| ページ本文のブロックを取得して要旨・論調を復元する | **取り消し** | M2 で「Notion は記事本文の正ではない」と決めた。Notion のブロックを読む実装は無く、設計上も作らない |
+| `<slug>.md` を書き、`git pull --rebase` してから push | 「書く」を落とした | `<slug>.md` を書くのは `compose` の仕事。`publish` は既存ファイルの `## imo` を書き換えるだけ |
+| 同じ slug のファイルが既にあるとき上書きせずスキップして Status だけ更新 | 実装の対応物に読み替え | publish は新規ファイルを作らないので「上書き」は起きない。対応物は「ローカルに手書きの imo があれば Notion の値で上書きせず Status だけ進める」 |
+| 出力ディレクトリを `dist` に設定した | 「設定項目が無い」と註記 | Workers Builds に出力ディレクトリの項目は無く、`wrangler.jsonc` の `assets.directory` が担う |
+
+### 決めたこと
+
+- **Notion を進めるのは commit/push の後**（2 段構成）。`publish.yml` は
+  「publish → commit/push → publish」の順にステップを並べる。1 回目は Markdown に
+  差し込むだけ、2 回目が `mark_published` を呼ぶ
+- **`*.workers.dev` で進める。** 独自ドメインは M5（ads.txt がルートドメインを要求する）
+- **`not_found_handling` は指定しない。** 404.html を持っていないため指定しても効かない。
+  カスタム 404 を作るときに合わせて入れる
+- **Workers Builds にパスフィルタは無い。** `candidates.jsonl` だけの commit でもビルドが走る。
+  1 日 3 回の承認なら月 120 回で Free の 500 枠に収まる（毎時 1 件ずつ承認すると 750 回で超過）
+
+### 申し送り
+
+- **Cloudflare 側の失敗は Issue 経路に乗らない。** Actions が成功して commit も push された
+  あとに Cloudflare のビルドが落ちると、`publish.yml` は正常終了し Issue も立たず、
+  サイトが何日も古いままになる。気づく手段はダッシュボードだけ。
+  中期的には Cloudflare の Build notification か、公開 URL の `/rss.xml` の最終更新を
+  定期チェックするステップを足す
+- **`SITE_URL` のガードが Workers Builds で効くかは未確認。** `site/astro.config.mjs` の判定は
+  `!process.env.SITE_URL && process.env.CI` で、Cloudflare のビルド環境に `CI` があるかを
+  確認できていない。無い場合は**ビルドが成功して localhost の URL が sitemap と RSS に
+  焼き込まれる**。初回ビルドで `SITE_URL` を空にして落ちるかを 1 回見れば分かる
+- **`not_found_handling` の既定挙動は未確認。** 公開後に `curl -i https://<url>/no-such-page` を
+  1 回確認する
+- **`compatibility_date` が当日（2026-09-22）で、サーバ側が受理するかは未確認。**
+  `wrangler deploy --dry-run` は日付を検証しない（未来日付でも警告なく成功する — 実測）
+- **`data_source_id` は Actions のログに素で出る。** secret 登録しているのは
+  `NOTION_DATABASE_ID` で、そこから導出した `data_source_id` はマスク対象外。
+  トークンが無ければ悪用できないので情報開示のみ。気にするなら
+  `src/imotech/notion.py` の `request()` のエラー文からパスの ID をマスクする
+- **「1 件は手書き imo でローカル優先、残り全部が skip」のとき終了コードは 0** になる。
+  1 件は Notion が進むので完全な失敗ではないと判断した
