@@ -232,6 +232,10 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
     drafted: list[Candidate] = []
     empty: list[Candidate] = []
     failed: list[Candidate] = []
+    # Notion の成否は終了コードの判定に使う。無人実行では、投入が全滅したことを
+    # 標準エラーの warn だけで知る術がない（docs/DESIGN.md 5.5 の失敗検知）
+    notion_ok: list[Candidate] = []
+    notion_failed: list[Candidate] = []
     with ArticleFetcher(
         user_agent=USER_AGENT,
         timeout=settings.http_timeout_seconds,
@@ -318,13 +322,16 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
                         notion_ds, result.draft, collected_at=c.collected_at
                     )
                     _p(f"      Notion: {c.notion_page_id}")
+                    notion_ok.append(c)
                 except NotionBlockLimitError as e:
                     _p(f"      [warn] {e}", err=True)
+                    notion_failed.append(c)
                     # 以降の候補で繰り返し叩かない。参照を捨てる前に閉じる
                     notion.close()
                     notion = None
                 except NotionError as e:
                     _p(f"      [warn] Notion への投入に失敗: {e}", err=True)
+                    notion_failed.append(c)
 
             # 書けても既にあっても、この候補の記事はディスク上に存在する。
             # 状態を進めないと毎回選出され、そのたびに Gemini を呼んで課金される
@@ -346,20 +353,44 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
 
     # 何も成功しなかった実行でも、何が起きたかと次の一手を必ず出す
     _p("")
-    _p(
+    summary = (
         f"まとめ: 選出 {len(sel.selected)} / 記事化 {len(drafted)} / "
         f"本文取得できず {len(no_content)} / 生成失敗 {len(failed)} / 内容不足 {len(empty)}"
     )
+    if notion_ok or notion_failed:
+        summary += f" / Notion 投入 {len(notion_ok)} 成功 {len(notion_failed)} 失敗"
+    _p(summary)
     if args.dry_run:
         _p(f"--dry-run のため何も書いていません。本実行なら最大 {len(sel.selected)} 件を")
         _p(f"{settings.articles_dir} に書き出します。")
-    elif drafted:
+        return 0
+    if drafted:
         _p(f"{settings.articles_dir} の `## imo` に所感を書くと公開されます。")
         _p("未記入の一覧は `uv run imotech status`、表示の確認は `cd site && npm run dev`。")
     elif failed:
         _p("生成に失敗した候補は pending のまま残しました。次回の実行で再挑戦します。")
     else:
         _p("新しく記事化できたものはありませんでした。")
+
+    # ここから終了コードの判定。無人実行（daily.yml）はこれだけを見て Issue を立てる。
+    #
+    # 部分的な失敗は 0 で返す — 失敗した候補は pending に残り、次回の実行が拾う。
+    # 1 件ごとに Issue が立つと通知が意味を失う（docs/DESIGN.md 5.5）。
+    # 非 0 にするのは、次回も同じ結果になる＝人が直すまで回復しない失敗だけ。
+    if failed and not drafted:
+        _p(
+            f"生成が {len(failed)} 件すべて失敗し、記事化できたものがありません。"
+            "Gemini 側の障害かキーの失効が疑われます。",
+            err=True,
+        )
+        return 1
+    if notion_failed and not notion_ok:
+        _p(
+            f"Notion への投入が {len(notion_failed)} 件すべて失敗しました。"
+            "NOTION_TOKEN / NOTION_DATABASE_ID とインテグレーションの接続を確認してください。",
+            err=True,
+        )
+        return 1
     return 0
 
 

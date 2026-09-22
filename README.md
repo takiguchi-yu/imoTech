@@ -20,7 +20,7 @@ Hacker News で議論を呼んだ英語圏のテック記事を、**元記事の
 | **M1 ローカルで収集〜生成が通る** | **完了** |
 | **ローカル通し（Notion を飛ばして localhost まで）** | **完了** — `compose` が Markdown を書き、Astro でサイトが出る |
 | **M2 Notion 連携** | **完了** — `notion-setup` / `notion-sync` / `publish`。Notion を使わない運用も引き続き成立する |
-| M3 GitHub Actions で定時実行 | CI のみ先行。`daily.yml` は未 |
+| **M3 GitHub Actions で定時実行** | **完了** — `daily.yml` が毎日 06:17 JST に回り、失敗すると `pipeline-failure` の Issue が立つ |
 | M4 公開（Cloudflare Workers） | サイト自体は完成。デプロイ連携が未 |
 
 ## セットアップ
@@ -241,6 +241,57 @@ uv run imotech status   # imo 未記入と判定されている記事が挙が�
 
 初期の閾値 100/30 は**運用しながら調整する前提の値**で、一次情報に基づくものではない。
 2 週間ほど回してから `uv run imotech stats` で分布を見て動かす（[docs/DESIGN.md 4.2](./docs/DESIGN.md)）。
+
+## 自動実行（GitHub Actions）
+
+| ワークフロー | いつ | 何をする |
+|---|---|---|
+| [`daily.yml`](./.github/workflows/daily.yml) | 毎日 06:17 JST（cron `17 21 * * *`）+ 手動 | `collect` → `compose` → 候補ストアと記事 Markdown を commit して push |
+| [`ci.yml`](./.github/workflows/ci.yml) | `push` / `pull_request` | format・lint・test（Python とサイトの両方） |
+
+毎正時を避けているのは、公式に「High load times include the start of every hour」「some queued
+jobs may be dropped」と明記されているため。ずらしても drop は消えないので、**飛んでも次回が拾う**
+設計にしている（状態を時刻ではなく `state` で持ち、`IMOTECH_MAX_AGE_HOURS=96` の猶予がある）。
+
+手動で回すときは Actions タブの daily → **Run workflow**、または:
+
+```bash
+gh workflow run daily.yml
+gh run watch
+```
+
+### Secrets の登録
+
+`.env` と同じ 3 つを GitHub 側にも入れる。**値を履歴に残さない**よう標準入力で渡す。
+
+```bash
+gh secret set GEMINI_API_KEY     # 入力してから Ctrl-D
+gh secret set NOTION_TOKEN
+gh secret set NOTION_DATABASE_ID
+gh secret list                   # 名前と更新日だけが見える
+```
+
+`GITHUB_TOKEN` は登録しない（Actions が実行ごとに自動発行する）。`CLOUDFLARE_API_TOKEN` も
+不要 — Workers Builds の Git 連携が push を検知するので、Actions からデプロイを叩かない。
+
+### 失敗したとき
+
+**メール通知には依存していない。** cron の通知はワークフロー作成者にしか飛ばず、cron を編集
+すると通知先が移るため、`pipeline-failure` ラベルの Issue を一次の通知手段にしている。
+同じラベルの open issue があれば**コメントが追記される**だけで、Issue は増えない。
+
+```bash
+gh issue list --label pipeline-failure
+```
+
+直したら Issue を close する。次の失敗で新しい Issue が立つ。
+
+**何が「失敗」になるか**は `compose` の終了コードで決まる。1 件生成に失敗しただけでは失敗に
+しない（pending に残り次回が拾う）。非 0 になるのは、人が直すまで回復しないものだけ:
+
+- 生成が全滅して記事化 0 件（Gemini のキー失効・無料枠切れ）
+- Notion への投入が全滅（トークン失効・`NOTION_DATABASE_ID` の誤り・ブロック上限）
+- `GEMINI_API_KEY` が未設定（終了コード 2）
 
 ## 開発
 

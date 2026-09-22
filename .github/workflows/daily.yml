@@ -1,0 +1,93 @@
+name: daily
+
+on:
+  # 06:17 JST。毎正時を避けているのは、公式に「High load times include the start of
+  # every hour」「some queued jobs may be dropped」と明記されているため。
+  # ずらしても drop は消えないので、飛ぶ前提の設計にしてある（docs/DESIGN.md 5.5）
+  schedule:
+    - cron: "17 21 * * *"
+  workflow_dispatch:
+
+# commit / push に contents、Issue 起票に issues、
+# 失敗したステップ名を実行の記録から読むのに actions を使う
+permissions:
+  contents: write
+  issues: write
+  actions: read
+
+# 前の実行を殺さない。候補ストアを書いている途中で止めると、
+# 状態だけ進んで記事が無い候補が残る
+concurrency:
+  group: daily
+  cancel-in-progress: false
+
+jobs:
+  pipeline:
+    name: 収集と生成
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # rebase で履歴をたどるため浅い clone にしない
+          fetch-depth: 0
+
+      - name: uv をセットアップ
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 依存をロックファイル通りに入れる
+        run: uv sync --frozen
+
+      - name: 候補を収集する
+        run: uv run imotech collect
+
+      # 終了コードの意味は src/imotech/cli.py の cmd_compose 末尾を参照。
+      # 部分的な失敗は 0 で返り、次回の実行が pending を拾う。
+      # 非 0 になるのは人が直すまで回復しない失敗だけ
+      - name: 下書きを生成する
+        run: uv run imotech compose
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+
+      # compose は候補ストアと記事 Markdown の両方を書く。Markdown を残して
+      # おかないと、次回の `git pull --rebase` が未コミット変更で止まる。
+      # imo 未記入の記事はサイト側のゲートが公開から除外する
+      # （site/src/lib/imo.ts と site/scripts/check-unpublished.mjs）
+      - name: 更新を commit して push する
+        run: |
+          set -euo pipefail
+
+          # 41898282 は github-actions[bot] のユーザー ID
+          # （`gh api /users/github-actions%5Bbot%5D` で確認）
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add data/candidates.jsonl site/src/content/articles
+
+          # 熟成待ちで何も変わらない日がある。変更が無いのは失敗ではない
+          if git diff --cached --quiet; then
+            echo "更新はありません"
+            exit 0
+          fi
+
+          git commit -m "chore: update candidates ($(date -u '+%Y-%m-%d'))"
+
+          # publish.yml が同時に site/ を触りうるので、push 前に取り込む
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: 失敗を通知する
+        if: failure()
+        uses: ./.github/actions/notify-failure
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          causes: |
+            - **Gemini が 429**: 無料枠の 1 日あたり上限に当たった。`IMOTECH_MAX_DRAFTS_PER_RUN` を下げるか、翌日まで待つ
+            - **Notion が 403**: ブロック上限（Free は生涯 1,000 ブロック）、インテグレーションが DB に接続されていない、`NOTION_DATABASE_ID` が誤っている、のいずれか
+            - **Hacker News が 5xx**: Algolia 側の一時障害。3 回リトライしても駄目なら候補 0 件で終わる（これ自体では失敗にならない）
+            - **`git pull --rebase` が競合**: `publish.yml` と同じ記事ファイルを同時に触った。ローカルで rebase して解決する
+            - **timeout（20 分）**: pending が育ちすぎている。`IMOTECH_MAX_PROBES_PER_RUN` と `IMOTECH_PROBE_BUDGET` を見直す

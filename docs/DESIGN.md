@@ -93,7 +93,7 @@ Notion 運用との対応:
 | Draft を Notion に投入 | Markdown を `site/src/content/articles/` に書き出す |
 | `imo` プロパティが空なら公開しない | 本文の `IMO_PLACEHOLDER` が残っていれば公開しない |
 | 人が Status を Approved にする | 人がプレースホルダを自分の言葉に置き換える |
-| `publish` が Markdown を commit | `compose` が直接書くので commit は手動 |
+| `publish` が Markdown を commit | `compose` が直接書く。M3 以降は `daily.yml` が候補ストアと一緒に commit する |
 | state を `drafted` にする | 同じ（Markdown を書けた時点で `drafted`） |
 
 **公開の引き金を「人が何かを書くこと」に置いている点は同じ**。フラグを立てる方式にすると
@@ -562,11 +562,12 @@ GET https://hn.algolia.com/api/v1/search_by_date
 
 | 事象 | 対処 |
 |---|---|
-| ジョブ失敗 | `if: failure()` で `gh issue create`。**同じラベル `pipeline-failure` の open issue があればコメント追記**して乱立を防ぐ |
+| ジョブ失敗 | `if: failure()` で `.github/actions/notify-failure`（composite action）を呼ぶ。**同じラベル `pipeline-failure` の open issue があればコメント追記**して乱立を防ぐ。`publish.yml` からも同じ action を使う |
+| 失敗を exit code に翻訳する | `if: failure()` はステップの終了コードしか見ない。`compose` は Gemini の失敗も Notion の 403 も捕まえて続行するため、**そのままでは全滅しても 0 で終わる**。そこで「人が直すまで回復しない失敗」＝ **生成が全滅して記事化 0 件**／**Notion 投入が全滅**のときだけ非 0 を返す（`src/imotech/cli.py` の `cmd_compose` 末尾）。部分的な失敗は 0 のまま — pending に残り次回が拾うので、1 件ごとに Issue が立つと通知が意味を失う |
 | schedule の遅延・drop | 状態を時刻ではなく `state` / `Status` で持っているため、1 回飛んでも次回が拾う。`MAX_AGE_HOURS=96` があるので、3 回連続で飛んでも取りこぼさない |
 | 60 日無活動での自動停止 | **`daily.yml` が毎日 `candidates.jsonl` を commit するため、無活動状態にならない**（public repo の schedule は「no repository activity in 60 days」で停止する。[docs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)） |
 | ワークフローの多重実行 | `concurrency: { group: <workflow>, cancel-in-progress: false }` |
-| commit の競合 | push 前に `git pull --rebase origin main`。`daily.yml`（data/）と `publish.yml`（site/content/）は触るパスが異なるため rebase で解決できる |
+| commit の競合 | push 前に `git pull --rebase origin main`。`daily.yml` は `data/candidates.jsonl` と **`site/src/content/articles/` の新規ファイル**、`publish.yml` は既存記事の `## imo` を書き換える。同じ記事ファイルに同時に当たらない限り rebase で解決でき、当たった場合はジョブが失敗して Issue が立つ |
 | 失敗通知が届かない | 公式の通知は「自分がトリガーした実行」が対象で、schedule はワークフロー作成者に飛ぶ。cron を編集すると通知先が移る（[notifications](https://docs.github.com/en/actions/concepts/workflows-and-actions/notifications-for-workflow-runs)）。**Issue 起票を一次の通知手段とし、メール通知には依存しない** |
 
 **Secrets**（すべて GitHub Secrets に登録。public repo でもログには出ない）:
@@ -576,7 +577,7 @@ GET https://hn.algolia.com/api/v1/search_by_date
 | `GEMINI_API_KEY` | Gemini API | Google AI Studio |
 | `NOTION_TOKEN` | Notion 内部インテグレーション | Notion の Integrations 画面 |
 | `NOTION_DATABASE_ID` | 対象 DB | Notion の DB URL |
-| `GITHUB_TOKEN` | commit / issue 起票 | Actions が自動発行（`permissions: {contents: write, issues: write}` を宣言） |
+| `GITHUB_TOKEN` | commit / issue 起票 / 失敗ステップの特定 | Actions が自動発行（`permissions: {contents: write, issues: write, actions: read}` を宣言。`actions: read` は `gh run view --json jobs` が実行の記録を読むために必要） |
 
 `CLOUDFLARE_API_TOKEN` は**不要**。Workers Builds の Git 連携が push を検知して自動ビルドするため、Actions からデプロイを叩かない。
 

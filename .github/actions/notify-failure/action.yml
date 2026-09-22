@@ -1,0 +1,91 @@
+name: 失敗を Issue で通知する
+description: >
+  同じラベルの open issue があればコメントを追記し、無ければ新規に起票する。
+  cron 実行の失敗はメール通知が当てにできない（公式の通知は「自分がトリガーした実行」が
+  対象で、schedule はワークフロー作成者に飛び、cron を編集すると通知先が移る）ため、
+  Issue を一次の通知手段にしている。docs/DESIGN.md 5.5 を参照。
+
+inputs:
+  label:
+    description: 起票・検索に使うラベル。これが同じ Issue は 1 本にまとめられる
+    required: false
+    default: pipeline-failure
+  causes:
+    description: Issue 本文に載せる「想定される原因」（Markdown）。ワークフローごとに異なる
+    required: true
+  token:
+    description: gh CLI に渡すトークン。issues:write が必要
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # ラベルが無いリポジトリで `gh issue create --label` はエラーになる。
+    # --force は既存なら更新するだけなので、毎回実行しても増えない
+    - name: ラベルを用意する
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        LABEL: ${{ inputs.label }}
+      run: |
+        set -euo pipefail
+        gh label create "$LABEL" \
+          --color B60205 \
+          --description "自動実行パイプラインの失敗" \
+          --force
+
+    - name: Issue を起票、または既存にコメントする
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        LABEL: ${{ inputs.label }}
+        CAUSES: ${{ inputs.causes }}
+        WORKFLOW: ${{ github.workflow }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        RUN_ATTEMPT: ${{ github.run_attempt }}
+        EVENT: ${{ github.event_name }}
+      run: |
+        set -euo pipefail
+
+        # 失敗したステップ名を実行の記録から取る。呼び出し側に書かせると、
+        # ステップを増やしたときに更新を忘れて嘘の原因が載る
+        failed_steps="$(
+          gh run view "$GITHUB_RUN_ID" --json jobs \
+            --jq '[.jobs[] | .steps[] | select(.conclusion == "failure") | .name] | join(", ")'
+        )"
+        [ -n "$failed_steps" ] || failed_steps="（記録に失敗したステップが無い。ジョブ自体の異常か timeout）"
+
+        body="$(cat <<EOF
+        \`$WORKFLOW\` が失敗しました。
+
+        | | |
+        | --- | --- |
+        | 実行 | $RUN_URL |
+        | 失敗したステップ | $failed_steps |
+        | トリガー | \`$EVENT\`（試行 $RUN_ATTEMPT 回目） |
+        | 発生時刻 | $(date -u '+%Y-%m-%d %H:%M UTC') |
+
+        ## 想定される原因
+
+        $CAUSES
+
+        ---
+
+        この Issue は \`.github/actions/notify-failure\` が自動で起票しています。
+        直したら close してください。次の失敗では**この Issue にコメントが追記**され、
+        新しい Issue は立ちません（open のものがある限り 1 本にまとめます）。
+        EOF
+        )"
+        existing="$(
+          gh issue list --label "$LABEL" --state open --limit 1 \
+            --json number --jq '.[0].number // empty'
+        )"
+
+        if [ -n "$existing" ]; then
+          echo "既存の Issue #$existing にコメントを追記します"
+          gh issue comment "$existing" --body "$body"
+        else
+          echo "新しい Issue を起票します"
+          url="$(gh issue create --label "$LABEL" --title "$WORKFLOW が失敗しました" --body "$body")"
+          echo "起票: $url"
+        fi
