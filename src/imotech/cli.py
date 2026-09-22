@@ -18,8 +18,26 @@ from .config import REPO_ROOT, USER_AGENT, Settings, load_settings
 from .extract import ArticleFetcher
 from .llm import LLMError, build_user_prompt, load_system_instruction
 from .models import Candidate, CandidateState, SkipReason
+from .notion import (
+    DATABASE_SCHEMA,
+    NotionBlockLimitError,
+    NotionClient,
+    NotionError,
+    create_database_payload,
+    patch_properties_payload,
+    schema_diff,
+)
 from .pipeline import mark_skipped, matured_candidates, select
-from .render import has_imo, write_article
+from .render import (
+    article_path,
+    from_markdown,
+    has_imo,
+    imo_of,
+    imo_section_text,
+    load_article,
+    set_imo,
+    write_article,
+)
 from .sources.hackernews import HackerNews
 from .store import CandidateStore
 from .urlhash import url_hash
@@ -208,6 +226,8 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
         _apply_skips(store, sel.to_skip, dry_run=args.dry_run)
         return 0
 
+    notion, notion_ds = _open_notion(settings, dry_run=args.dry_run)
+
     no_content: list[Candidate] = []
     drafted: list[Candidate] = []
     empty: list[Candidate] = []
@@ -290,6 +310,22 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
             _p(f"    → {rel}" if created else f"    → {rel} は既にあるので上書きしません")
             if not created:
                 _p("      （この記事の生成結果は破棄しました。次回は生成しません）")
+            # Notion が設定されていればレビュー面としても投入する。
+            # 記事本文の正はあくまで Markdown で、Notion からは imo だけを持ってくる
+            if notion is not None and not args.dry_run:
+                try:
+                    c.notion_page_id = notion.create_draft(
+                        notion_ds, result.draft, collected_at=c.collected_at
+                    )
+                    _p(f"      Notion: {c.notion_page_id}")
+                except NotionBlockLimitError as e:
+                    _p(f"      [warn] {e}", err=True)
+                    # 以降の候補で繰り返し叩かない。参照を捨てる前に閉じる
+                    notion.close()
+                    notion = None
+                except NotionError as e:
+                    _p(f"      [warn] Notion への投入に失敗: {e}", err=True)
+
             # 書けても既にあっても、この候補の記事はディスク上に存在する。
             # 状態を進めないと毎回選出され、そのたびに Gemini を呼んで課金される
             c.state = CandidateState.DRAFTED
@@ -304,6 +340,9 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
         + [(c, SkipReason.LLM_FAILED) for c in empty]
     )
     _apply_skips(store, to_skip, dry_run=args.dry_run)
+
+    if notion is not None:
+        notion.close()
 
     # 何も成功しなかった実行でも、何が起きたかと次の一手を必ず出す
     _p("")
@@ -396,8 +435,395 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> int:
         for f in pending:
             _p(f"  {f.name}")
         _p("")
-        _p("各ファイルの `## imo` にあるコメント行を消して、自分の言葉で所感を書いてください。")
+        if settings.notion_enabled:
+            _p("Notion で imo を書いて Status を Approved にし、")
+            _p("`uv run imotech publish` を実行すると Markdown に反映されます。")
+            _p("Markdown に直接書いてもよく、その場合はローカルの内容が優先されます。")
+        else:
+            _p("各ファイルの `## imo` にあるコメント行を消して、自分の言葉で所感を書いてください。")
     return 0
+
+
+def _notion_client(settings: Settings) -> NotionClient:
+    """設定を反映した Notion クライアント。既定値で作らないための共通化。"""
+    return NotionClient(
+        token=settings.notion_token,
+        min_interval=settings.notion_min_interval_seconds,
+        max_attempts=settings.notion_max_attempts,
+        timeout=settings.notion_timeout_seconds,
+    )
+
+
+def _open_notion(settings: Settings, *, dry_run: bool) -> tuple[NotionClient | None, str]:
+    """Notion クライアントを用意する。使えなければ (None, "")。
+
+    トークンと DB ID が揃っていないときは黙って Markdown 直書きだけに倒す。
+    Notion は「あれば使うレビュー面」で、無くてもパイプラインは完結する。
+    """
+    if dry_run or not settings.notion_enabled:
+        return None, ""
+    client = _notion_client(settings)
+    try:
+        ds = client.data_source_id(settings.notion_database_id)
+    except NotionError as e:
+        _p(f"[warn] Notion を使えません（Markdown の書き出しは続けます）: {e}", err=True)
+        client.close()
+        return None, ""
+    return client, ds
+
+
+def cmd_publish(settings: Settings, args: argparse.Namespace) -> int:
+    """Notion で承認された記事の imo を、ローカルの Markdown に差し込む。
+
+    記事本文は compose が書いたものが正で、Notion からは人が書いた imo だけを
+    持ってくる。こうすると Notion のブロックから記事を再構成せずに済み、
+    「正となるデータは Git」（Q2 の決定）も保てる。
+
+    **書き込む前に 3 つ確かめる。** どれかが崩れたらその 1 件を飛ばし、
+    Notion 側も更新しない（次回また拾えるようにする）。
+
+    1. slug が安全か — Notion の Slug は人が編集できるので、そのままパスに
+       連結すると articles_dir の外に書き込める
+    2. その Markdown が同じ記事か — Slug だけで引くと、slug が衝突した別の記事に
+       imo を書き込んでしまう。フロントマターの sourceUrl から url_hash を
+       計算し直して突き合わせる
+    3. 人が手で書いた imo が無いか — プレースホルダを消し切れずに書き足した
+       状態は imo_of では「未記入」に見える。そのまま上書きすると手書きが消える
+    """
+    if not settings.notion_enabled:
+        _p(
+            "NOTION_TOKEN と NOTION_DATABASE_ID が未設定です。"
+            "Notion を使わない運用では、生成された Markdown の `## imo` に直接書いてください"
+            "（`uv run imotech status` で未記入の一覧が出ます）。",
+            err=True,
+        )
+        return 2
+
+    client = _notion_client(settings)
+    applied, already, skipped = 0, 0, 0
+    try:
+        ds = client.data_source_id(settings.notion_database_id)
+        approved = client.fetch_approved(ds)
+        _p(f"Notion で承認済み（imo 記入済み）: {len(approved)} 件")
+        if not approved:
+            _p("処理するものはありません。")
+            _p("Notion 側で Status が Approved になっているか、imo が空でないか確認してください。")
+            return 0
+
+        for page in approved:
+            path = article_path(settings.articles_dir, page.slug)
+            if path is None:
+                skipped += 1
+                _p(
+                    f"  [warn] Slug {page.slug!r} は記事のファイル名として使えません。"
+                    "Notion 側の Slug が書き換えられていないか確認してください。",
+                    err=True,
+                )
+                continue
+            if not path.exists():
+                skipped += 1
+                _p(f"  [warn] {path} が見つかりません", err=True)
+                _p(
+                    f"         Notion 側の Slug は {page.slug!r} です。"
+                    "この記事をまだ compose していないか、Notion で Slug が"
+                    "書き換えられている可能性があります。",
+                    err=True,
+                )
+                continue
+
+            md = path.read_text(encoding="utf-8")
+
+            # 同じ記事か。slug が衝突した別記事に書き込むのを防ぐ
+            try:
+                local_hash = url_hash(from_markdown(md).source_url)
+            except ValueError as e:
+                skipped += 1
+                _p(f"  [warn] {path.name} のフロントマターを読めません: {e}", err=True)
+                continue
+            if local_hash != page.url_hash:
+                skipped += 1
+                _p(
+                    f"  [warn] {path.name} は別の記事です"
+                    f"（ローカル {local_hash} / Notion {page.url_hash}）。"
+                    "slug が衝突しています。書き込みません。",
+                    err=True,
+                )
+                continue
+
+            # 人が手で書いた imo を Notion の値で消さない
+            handwritten = imo_section_text(md)
+            if handwritten:
+                already += 1
+                _p(f"  {path.name} はローカルの imo を優先しました")
+                _p("      （Notion の imo は取り込んでいません）")
+                if not imo_of(md):
+                    _p(
+                        "      ※ プレースホルダのコメント行が残っているため、"
+                        "サイトにはまだ出ません。その行を消してください。",
+                        err=True,
+                    )
+                if not args.dry_run:
+                    client.mark_published(page.page_id)
+                continue
+
+            try:
+                updated = set_imo(md, page.imo)
+            except ValueError as e:
+                # 空白や不可視文字だけの imo、見出しが無い、など。
+                # ここで落とすと以降の承認済みページが 1 件も処理されない
+                skipped += 1
+                _p(f"  [warn] {path.name} に差し込めません: {e}", err=True)
+                continue
+
+            if args.dry_run:
+                applied += 1
+                _p(f"  {path.name} に imo を差し込みます（--dry-run のため書きません）")
+                _p(f"      imo: {page.imo[:60]}{'…' if len(page.imo) > 60 else ''}")
+                continue
+
+            path.write_text(updated, encoding="utf-8")
+            applied += 1
+            _p(f"  {path.name} に imo を差し込みました")
+            # Markdown を書いたあとに Notion を進める。逆順にすると、
+            # 書き込みに失敗したときに Notion だけ Published になって二度と拾えない
+            client.mark_published(page.page_id)
+
+        _p("")
+        verb = "差し込む予定" if args.dry_run else "差し込み"
+        _p(f"まとめ: {verb} {applied} / ローカル優先 {already} / 飛ばした {skipped}")
+        if args.dry_run:
+            _p("--dry-run のため、Markdown も Notion も変更していません。")
+        if skipped:
+            _p("飛ばした分は Notion の Status を Approved のままにしてあります。")
+            _p("原因を直してもう一度実行すれば処理されます。")
+        if applied or already:
+            _p("`cd site && npm run dev` で表示を確認してください。")
+            _p("公開物は Git が正なので、確認できたら commit してください。")
+        return 0
+    except NotionError as e:
+        _p(f"Notion の呼び出しに失敗しました: {e}", err=True)
+        _p(f"（ここまでの処理: 差し込み {applied} / ローカル優先 {already} / 飛ばした {skipped}）")
+        return 1
+    finally:
+        client.close()
+
+
+def cmd_notion_setup(settings: Settings, args: argparse.Namespace) -> int:
+    """Notion のデータベースを docs/DESIGN.md 3.1 のスキーマに合わせる。
+
+    既定は「既に NOTION_DATABASE_ID にある DB に足りないプロパティを追加する」。
+    Notion の UI で作った空の DB を使う場合がこれにあたる。
+    --create を渡したときだけ新しい DB を作る。
+    """
+    if not settings.notion_token:
+        _p(
+            "NOTION_TOKEN が未設定です。"
+            "発行の手順は README の「Notion をレビュー面として使う」の"
+            "「初期準備」節を参照してください。",
+            err=True,
+        )
+        return 2
+
+    if not args.create:
+        return _notion_patch_existing(settings, args)
+
+    payload = create_database_payload(args.create, args.title)
+    if args.dry_run:
+        _p("--dry-run のため作成しません。送るボディ:")
+        _p(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    client = _notion_client(settings)
+    try:
+        data = client.request("POST", "/databases", json=payload)
+    except NotionError as e:
+        _p(f"作成に失敗しました: {e}", err=True)
+        _p("", err=True)
+        _p(
+            "プロパティのスキーマの書式は公式ドキュメントで確認できていない箇所があります"
+            "（notion.py の DATABASE_SCHEMA のコメント参照）。"
+            "上の message を見て DATABASE_SCHEMA を直してください。",
+            err=True,
+        )
+        return 1
+    finally:
+        client.close()
+
+    db_id = data.get("id", "")
+    _p(f"データベースを作成しました: {db_id}")
+    _p(f"URL: {data.get('url', '')}")
+    _p("")
+    _p(".env に次を追記してください:")
+    _p(f"  NOTION_DATABASE_ID={db_id}")
+    return 0
+
+
+def _notion_patch_existing(settings: Settings, args: argparse.Namespace) -> int:
+    """既存の DB に足りないプロパティを追加する。"""
+    if not settings.notion_database_id:
+        _p(
+            "NOTION_DATABASE_ID が未設定です。"
+            "既存の DB を使うなら .env に設定してください。"
+            "新しく作るなら `notion-setup --create <親ページ ID>` を使ってください。",
+            err=True,
+        )
+        return 2
+
+    client = _notion_client(settings)
+    try:
+        ds_id = client.data_source_id(settings.notion_database_id)
+        ds = client.request("GET", f"/data_sources/{ds_id}")
+        existing = ds.get("properties") or {}
+        missing, rename, mismatched = schema_diff(existing)
+
+        _p(f"データソース: {ds_id}")
+        _p(f"既存のプロパティ: {len(existing)} 件 {sorted(existing)}")
+        if rename:
+            for old_name, spec in rename.items():
+                _p(f"改名: {old_name!r} → {spec['name']!r}（タイトル型は 1 つだけ持てるため）")
+        _p(f"追加するプロパティ: {len(missing)} 件 {sorted(missing)}")
+
+        if mismatched:
+            # 型は API では変えられない。名前だけ見て「揃っている」と言うと、
+            # そのあと compose が送る値が毎回 400 になる
+            _p("")
+            _p("★ 型が設計書と違うプロパティがあります。API では直せません。", err=True)
+            for name, d in sorted(mismatched.items()):
+                _p(f"    {name}: 期待 {d['expected']} / 実際 {d['actual']}", err=True)
+            _p("", err=True)
+            _p(
+                "Notion の UI でこれらのプロパティを削除し、"
+                "もう一度 notion-setup を実行してください"
+                "（Status は Status 型ではなく Select 型で作る必要があります）。",
+                err=True,
+            )
+            return 1
+
+        if not missing and not rename:
+            _p("スキーマは既に揃っています。何もしません。")
+            return 0
+
+        payload = patch_properties_payload(existing)
+        if args.dry_run:
+            _p("")
+            _p("--dry-run のため変更しません。送るボディ:")
+            _p(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
+
+        client.request("PATCH", f"/data_sources/{ds_id}", json=payload)
+        _p("")
+        _p("スキーマを更新しました。")
+        after = client.request("GET", f"/data_sources/{ds_id}").get("properties") or {}
+        _, _, still_mismatched = schema_diff(after)
+        still = sorted(set(DATABASE_SCHEMA) - set(after))
+        if still or still_mismatched:
+            if still:
+                _p(f"★ まだ足りないもの: {still}", err=True)
+            if still_mismatched:
+                _p(f"★ 型が合わないもの: {sorted(still_mismatched)}", err=True)
+            return 1
+        _p(f"設計書の {len(DATABASE_SCHEMA)} 件すべてが揃いました（現在 {len(after)} 件）。")
+        return 0
+    except NotionError as e:
+        _p(f"Notion の呼び出しに失敗しました: {e}", err=True)
+        return 1
+    finally:
+        client.close()
+
+
+def cmd_notion_sync(settings: Settings, args: argparse.Namespace) -> int:
+    """既に書き出した Markdown を Notion に投入する。
+
+    Gemini を呼ばない。生成済みの記事を後から Notion に載せる用途
+    （Notion を後で用意した場合や、投入に失敗した分のやり直し）。
+    URL Hash で既存を判定するので、何度実行しても増えない。
+    """
+    if not settings.notion_enabled:
+        _p(
+            "NOTION_TOKEN と NOTION_DATABASE_ID が必要です。"
+            "設定の取り方は README の「Notion をレビュー面として使う」の"
+            "「初期準備」節を参照してください。"
+            "Notion を使わない運用では、生成された Markdown の `## imo` に直接書きます"
+            "（`uv run imotech status` で未記入の一覧が出ます）。",
+            err=True,
+        )
+        return 2
+
+    files = sorted(settings.articles_dir.glob("*.md"))
+    _p(f"記事ディレクトリ: {settings.articles_dir}（{len(files)} 件）")
+    if not files:
+        _p("投入するものがありません。")
+        return 0
+
+    # 投入した page id を候補ストアに書き戻す。ここを書かないと、あとから
+    # 「この記事の Notion ページはどれか」を辿れなくなる
+    store = CandidateStore(settings.candidates_path)
+    by_hash = {c.url_hash: c for c in store.load()}
+    touched: list[Candidate] = []
+
+    client = _notion_client(settings)
+    created, existed, failed = 0, 0, 0
+    aborted: str | None = None
+    try:
+        ds = client.data_source_id(settings.notion_database_id)
+        for f in files:
+            try:
+                draft = load_article(f)
+            except ValueError as e:
+                _p(f"  [warn] {f.name} を読めません: {e}", err=True)
+                failed += 1
+                continue
+            candidate = by_hash.get(draft.url_hash)
+            try:
+                before = client.find_page_by_url_hash(ds, draft.url_hash)
+                page_id = client.create_draft(
+                    ds,
+                    draft,
+                    # 設計書 3.1 の Collected At は「候補として拾った時刻」。
+                    # 渡さないと生成時刻にフォールバックして別の値になる
+                    collected_at=candidate.collected_at if candidate else None,
+                )
+            except NotionError as e:
+                _p(f"  [warn] {f.name} の投入に失敗: {e}", err=True)
+                failed += 1
+                continue
+            if before:
+                existed += 1
+                _p(f"  {f.name} は既にあります（{page_id}）")
+            else:
+                created += 1
+                _p(f"  {f.name} → {page_id}")
+
+            if candidate is not None and candidate.notion_page_id != page_id:
+                candidate.notion_page_id = page_id
+                # skipped からは戻さない（models.py の CandidateState の不変条件）
+                if candidate.state is CandidateState.PENDING:
+                    candidate.state = CandidateState.DRAFTED
+                touched.append(candidate)
+    except NotionError as e:
+        # ここで return せず、下の集計と書き戻しを通す。
+        # 途中で落ちたときに「何件入ったか」「どこから再開すればよいか」が
+        # 出力から辿れないと、利用者は全部やり直すしかなくなる
+        aborted = str(e)
+        _p(f"Notion の呼び出しに失敗したため中断しました: {e}", err=True)
+    finally:
+        client.close()
+
+    if touched:
+        store.update(touched)
+        _p("")
+        _p(f"候補ストアに notion_page_id を記録しました（{len(touched)} 件）")
+
+    _p("")
+    _p(f"まとめ: 新規 {created} / 既存 {existed} / 失敗 {failed}")
+    if aborted:
+        _p("残りは投入されていません。もう一度実行してください。")
+        _p("既に入った分は URL Hash で判定され、重複して増えることはありません。")
+        return 1
+    if created:
+        _p("Notion で imo を書いて Status を Approved にしてください。")
+        _p("そのあと `uv run imotech publish` で Markdown に反映されます。")
+    return 1 if failed else 0
 
 
 # --- entrypoint -----------------------------------------------------------
@@ -420,6 +846,8 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
             "熟成済みの候補に現在値を問い合わせ、閾値を満たす上位 N 件を記事化する。"
             "問い合わせは熟成済み全件ではなく、収集時スコア上位 "
             "IMOTECH_MAX_PROBES_PER_RUN 件までに絞られる。"
+            "NOTION_TOKEN と NOTION_DATABASE_ID が揃っていれば、Markdown の書き出しに加えて "
+            "Notion にも下書きを投入する（--dry-run のときは Notion に触らない）。"
         ),
     )
     c.add_argument(
@@ -440,6 +868,55 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
 
     sub.add_parser("stats", help="候補ストアを集計する（閾値調整の材料）")
     sub.add_parser("status", help="書き出した記事のうち imo 未記入のものを挙げる")
+
+    sub.add_parser(
+        "notion-sync",
+        help="既に書き出した Markdown を Notion に投入する（Gemini を呼ばない）",
+        description=(
+            "site/src/content/articles/*.md を読んで Notion に下書きページを作る。"
+            "URL Hash で既存を判定するので何度実行しても増えない。"
+        ),
+    )
+
+    pub = sub.add_parser(
+        "publish",
+        help="Notion で承認された記事の imo を Markdown に差し込む",
+        description=(
+            "Status が Approved かつ imo が空でないページを探し、その imo を "
+            "site/src/content/articles/<slug>.md に差し込んで Notion 側を Published にする。"
+            "記事本文は compose が書いたものが正で、Notion からは imo だけを持ってくる。"
+            "ローカルに既に imo があればそちらを優先し、Notion の値は取り込まない。"
+        ),
+    )
+    pub.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Markdown も Notion も変更せず、何が起きるかだけを表示する",
+    )
+
+    ns = sub.add_parser(
+        "notion-setup",
+        help="Notion の DB を docs/DESIGN.md 3.1 のスキーマに合わせる",
+        description=(
+            "既定では NOTION_DATABASE_ID の DB に足りないプロパティを追加する"
+            "（Notion の UI で作った空の DB を使う場合）。"
+            "⚠️ 既存のタイトル列は Title に改名される"
+            "（Notion はタイトル型のプロパティを 1 つしか持てないため）。"
+            "既存のプロパティを削除することはない。"
+            "何が変わるかは --dry-run で確認できる。"
+            "--create を渡したときだけ新しい DB を作る。"
+        ),
+    )
+    ns.add_argument(
+        "--create",
+        metavar="PARENT_PAGE_ID",
+        default=None,
+        help="新しい DB を作る。親ページの ID（Notion のページ URL の末尾 32 桁）",
+    )
+    ns.add_argument("--title", default="imoTech Drafts", help="新規作成時の DB 名")
+    ns.add_argument(
+        "--dry-run", action="store_true", help="変更せず、送るボディと差分を表示するだけ"
+    )
     return p
 
 
@@ -451,6 +928,9 @@ def main(argv: list[str] | None = None) -> int:
         "compose": cmd_compose,
         "stats": cmd_stats,
         "status": cmd_status,
+        "publish": cmd_publish,
+        "notion-sync": cmd_notion_sync,
+        "notion-setup": cmd_notion_setup,
     }
     return handlers[args.command](settings, args)
 

@@ -19,7 +19,7 @@ Hacker News で議論を呼んだ英語圏のテック記事を、**元記事の
 | M0 準備 | API キーは完了。**実 RPD の確認**（AI Studio が組織で無効化されており実測で代替）・GitHub リポジトリ・Notion・Cloudflare・ドメイン確定が残り |
 | **M1 ローカルで収集〜生成が通る** | **完了** |
 | **ローカル通し（Notion を飛ばして localhost まで）** | **完了** — `compose` が Markdown を書き、Astro でサイトが出る |
-| M2 Notion 連携 | 未着手（`NOTION_TOKEN` が必要）。いまは Markdown 直書きで代替している |
+| **M2 Notion 連携** | **完了** — `notion-setup` / `notion-sync` / `publish`。Notion を使わない運用も引き続き成立する |
 | M3 GitHub Actions で定時実行 | CI のみ先行。`daily.yml` は未 |
 | M4 公開（Cloudflare Workers） | サイト自体は完成。デプロイ連携が未 |
 
@@ -76,6 +76,80 @@ uv run imotech status     # imo をまだ書いていない記事を挙げる
 uv run imotech stats      # 候補ストアを集計する（閾値調整の材料）
 ```
 
+### Notion をレビュー面として使う
+
+`NOTION_TOKEN` と `NOTION_DATABASE_ID` が**両方揃ったときだけ**有効になる。揃っていなければ
+Notion の処理は黙って飛ばされ、Markdown に直接書く運用のままになる。
+
+#### 初期準備（1 回だけ）
+
+**1. インテグレーションを作ってトークンを取る**
+
+<https://www.notion.so/profile/integrations> で「新しいインテグレーション」を作る。
+種類は **Internal**。作成後に表示される **Internal Integration Secret**（`ntn_` で始まる文字列）を
+`.env` の `NOTION_TOKEN=` に書く。
+
+**2. データベースを作る**
+
+Notion で新しいページを作り、そこにインラインのデータベースを置く（空でよい。プロパティは次の手順で揃える）。
+
+**3. インテグレーションをそのデータベースに接続する**
+
+データベースのページを開き、右上の `...` → **接続** → 手順 1 で作ったインテグレーション名を選ぶ。
+**これをしないと API から見えない**（`notion-setup` が「data_source がありません」と言う）。
+
+**4. データベース ID を `.env` に書く**
+
+データベースのページの URL がこの形になっている。
+
+```
+https://www.notion.so/<ワークスペース>/<32桁の英数字>?v=...
+                                        ^^^^^^^^^^^^^^ これが NOTION_DATABASE_ID
+```
+
+`.env` の `NOTION_DATABASE_ID=` に、この 32 桁を書く（ハイフンは無くてよい）。
+
+**5. スキーマを揃える**
+
+```bash
+uv run imotech notion-setup --dry-run   # 何が変わるか確認（書き込まない）
+uv run imotech notion-setup             # 適用
+```
+
+> ⚠️ **既存のタイトル列は `Title` に改名される。** Notion のデータベースはタイトル型の
+> プロパティを 1 つしか持てないため、既定の「名前」などを `Title` に改名する。
+> 列の値は保持されるが、名前が変わることは知っておくこと。既存のプロパティを削除することはない。
+
+#### 日々の運用
+
+```bash
+
+uv run imotech collect       # 候補を収集
+uv run imotech compose       # 記事を Markdown に書き出し、Notion にも投入する
+uv run imotech notion-sync   # 投入し漏れた分を後から入れる（Gemini を呼ばない）
+
+# ここで Notion を開き、imo を書いて Status を Draft → Approved に変える
+#   ↑ ここだけが人間の仕事
+
+uv run imotech publish       # 承認された imo を Markdown に差し込み、Notion を Published に
+cd site && npm run dev       # http://localhost:4321 で確認
+```
+
+`compose` は `NOTION_TOKEN` と `NOTION_DATABASE_ID` が揃っていれば **Markdown と Notion の両方**に書く。
+`--dry-run` のときは Notion に触らない。
+
+**ローカルと Notion の両方に imo を書いた場合、ローカルが優先される**（`publish` は Notion の imo を
+取り込まず、Status だけ Published にする）。
+
+**記事本文の正は Notion ではなく Markdown。** Notion からは imo だけを持ってくる。
+Notion が落ちても、Notion の内容を消しても、公開済みの記事は影響を受けない
+（[docs/DESIGN.md 3.0b](./docs/DESIGN.md)）。
+
+**新しく DB を作る場合**は `uv run imotech notion-setup --create <親ページの ID>`。
+
+> Notion の Free プランは、**メンバーが 2 人以上のワークスペースだと生涯 1,000 ブロックが上限**で、
+> API も 403 を返してパイプラインが止まる。1 人ワークスペースなら無制限なので、1 人運用を厳守すること。
+
 ### 書いた記事を見る
 
 ```bash
@@ -102,6 +176,16 @@ IMOTECH_MATURATION_HOURS=0 uv run imotech compose --dry-run --limit 1
 ```
 
 ## うまくいかないとき
+
+**Notion で Approved にしたのにサイトに出ない**
+
+```bash
+uv run imotech publish   # 承認済みの件数と、差し込んだファイル名が出る
+uv run imotech status    # imo 未記入と判定されている記事が挙がる
+```
+
+`publish` が「0 件」なら、Notion 側で Status が `Approved` になっていないか、`imo` プロパティが空。
+「Markdown なし」と出たら、その slug の記事がローカルに無い（先に `compose` が必要）。
 
 **imo を書いたのにサイトに出ない**
 
@@ -151,6 +235,9 @@ uv run imotech status   # imo 未記入と判定されている記事が挙が�
 | `IMOTECH_LLM_MAX_ATTEMPTS` | 3 | 1 モデルあたりの試行回数 |
 | `IMOTECH_HTTP_TIMEOUT` | 10 | 元記事取得のタイムアウト（秒） |
 | `IMOTECH_MAX_RESPONSE_BYTES` | 5242880 | 元記事のレスポンス上限 |
+| `IMOTECH_NOTION_MIN_INTERVAL` | 0.35 | Notion へのリクエスト間隔（秒）。Free/Plus は 180 req/min |
+| `IMOTECH_NOTION_MAX_ATTEMPTS` | 3 | Notion の試行回数 |
+| `IMOTECH_NOTION_TIMEOUT` | 30 | Notion のタイムアウト（秒） |
 
 初期の閾値 100/30 は**運用しながら調整する前提の値**で、一次情報に基づくものではない。
 2 週間ほど回してから `uv run imotech stats` で分布を見て動かす（[docs/DESIGN.md 4.2](./docs/DESIGN.md)）。

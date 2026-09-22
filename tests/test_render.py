@@ -16,7 +16,13 @@ from imotech.render import (
     IMO_PLACEHOLDER,
     IMO_PROMPT,
     IMO_SENTINEL,
+    article_path,
     has_imo,
+    imo_of,
+    imo_section_text,
+    is_safe_slug,
+    meaningful_text,
+    set_imo,
     to_markdown,
     write_article,
 )
@@ -166,7 +172,16 @@ def test_サイトが許可リスト方式で判定している():
     # body が取れないときに公開側へ倒れると、内容不明の記事が世に出る
     ts = (REPO_ROOT / "site" / "src" / "lib" / "imo.ts").read_text(encoding="utf-8")
     assert 'if (typeof body !== "string") return null;' in ts
-    assert "text.length > 0 ? text : null" in ts
+    assert "meaningfulText(text).length > 0 ? text : null" in ts
+
+
+def test_サイトも不可視文字を弾く():
+    # 貼り付け事故で不可視文字だけが入ると trim() を通り抜ける。
+    # 実測で U+200B / U+200C / U+FEFF が Python 側・サイト側・CI をすべて通過した
+    ts = (REPO_ROOT / "site" / "src" / "lib" / "imo.ts").read_text(encoding="utf-8")
+    assert "const MEANINGLESS = /[\\p{Cf}\\p{Cc}\\p{Z}\\s]/gu;" in ts, (
+        "site/src/lib/imo.ts の MEANINGLESS と render.py の _MEANINGLESS_CATEGORIES がずれている"
+    )
 
 
 def test_サイトの判定が全経路で使われている():
@@ -319,3 +334,200 @@ def test_両方消せば記入済みになる():
     md = to_markdown(_draft())
     md = md.replace(IMO_PROMPT, "これは面白い。")
     assert has_imo(md) is True
+
+
+# --- imo の取り出しと差し込み（Notion から持ってくるために使う）-------------
+
+
+def test_生成直後はimoが取れない():
+    assert imo_of(to_markdown(_draft())) is None
+
+
+def test_差し込んだimoを取り出せる():
+    md = set_imo(to_markdown(_draft()), "これは面白い。")
+    assert imo_of(md) == "これは面白い。"
+    assert has_imo(md) is True
+
+
+def test_差し込みは前後の空白を落とす():
+    md = set_imo(to_markdown(_draft()), "  所感。  \n")
+    assert imo_of(md) == "所感。"
+
+
+def test_複数段落のimoも差し込める():
+    imo = "1 段落目。\n\n2 段落目。"
+    assert imo_of(set_imo(to_markdown(_draft()), imo)) == imo
+
+
+def test_差し込んでも要旨と論調が残る():
+    md = set_imo(to_markdown(_draft()), "所感。")
+    assert "## 元記事の要旨" in md and "- 要旨1" in md
+    assert "### 論点A" in md and "詳細A" in md
+
+
+def test_差し込みは冪等ではなく置き換えになる():
+    md = set_imo(to_markdown(_draft()), "1 回目")
+    md = set_imo(md, "2 回目")
+    assert imo_of(md) == "2 回目"
+    assert "1 回目" not in md
+
+
+def test_imoの後ろに別の節があっても保たれる():
+    md = to_markdown(_draft()) + "\n## おまけ\n\n別の話。\n"
+    out = set_imo(md, "所感。")
+    assert imo_of(out) == "所感。"
+    assert "## おまけ" in out and "別の話。" in out
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "\n\n", IMO_PLACEHOLDER, IMO_SENTINEL])
+def test_空やプレースホルダは差し込めない(bad):
+    with pytest.raises(ValueError):
+        set_imo(to_markdown(_draft()), bad)
+
+
+def test_imo節が無ければ差し込めない():
+    with pytest.raises(ValueError):
+        set_imo("## 要旨\n\n- x\n", "所感。")
+
+
+def test_サイト側と同じ判定になる():
+    # Python 側（imo_of）とサイト側（imoOf）で結果が食い違うと、
+    # 「Notion では公開済みなのにサイトに出ない」が起きる
+    md = to_markdown(_draft())
+    cases = [
+        (md, None),
+        (set_imo(md, "所感。"), "所感。"),
+        (md.replace(IMO_PROMPT, ""), None),
+        (md.replace(IMO_PLACEHOLDER, ""), None),
+    ]
+    for text, expected in cases:
+        assert imo_of(text) == expected
+
+
+# --- imo の見出しの表記ゆれ（サイト側との一致の回帰テスト）------------------
+#
+# 素朴な部分一致にしていたため `##  imo` を取りこぼし、`## imo について` では
+# 「について」を imo 本文として取り込んでいた。判定がずれると
+# 「Notion では公開済みなのにサイトに出ない」が起きる。
+
+
+ARTICLE_HEAD = '---\ntitle: "T"\n---\n\n## 元記事の要旨\n\n- a\n\n'
+
+
+@pytest.mark.parametrize("heading", ["## imo", "##  imo", "##\timo", "##   imo  "])
+def test_imo見出しの表記ゆれを受け入れる(heading):
+    assert imo_of(f"{ARTICLE_HEAD}{heading}\n\n所感。\n") == "所感。"
+
+
+@pytest.mark.parametrize("heading", ["## imo について", "## imoは", "### imo", "## IMO"])
+def test_imo見出しでないものは受け入れない(heading):
+    assert imo_of(f"{ARTICLE_HEAD}{heading}\n\n所感。\n") is None
+
+
+def test_表記ゆれの見出しにも差し込める():
+    md = f"{ARTICLE_HEAD}##  imo\n\n{IMO_PROMPT}\n"
+    assert imo_of(md) is None
+    out = set_imo(md, "所感。")
+    assert imo_of(out) == "所感。"
+    assert "##  imo" in out  # 見出しは書き換えない
+
+
+def test_サイト側の見出し正規表現と一致している():
+    ts = (REPO_ROOT / "site" / "src" / "lib" / "imo.ts").read_text(encoding="utf-8")
+    # サイト側: /^##\s+imo\s*$/m 相当。Python 側は [ \t] に限定している（\s は改行を含むため）
+    assert "IMO_HEADING = /^##[ \\t]+imo[ \\t]*$/m" in ts, (
+        "site/src/lib/imo.ts の見出し正規表現と render.py の _IMO_HEADING_RE がずれている"
+    )
+
+
+# --- 不可視文字（レビューで実測された Blocker の回帰テスト）----------------
+
+
+@pytest.mark.parametrize(
+    "ch",
+    [
+        "\u200b",  # ゼロ幅スペース
+        "\u200c",  # ゼロ幅非結合子
+        "\u200d",  # ゼロ幅結合子
+        "\ufeff",  # BOM
+        "\u00a0",  # ノーブレークスペース
+        "\u3000",  # 全角空白
+        "   ",
+        "\n\t ",
+        "\u200b \u3000\ufeff",
+    ],
+)
+def test_不可視文字だけのimoは差し込めない(ch):
+    with pytest.raises(ValueError, match="目に見える文字がない"):
+        set_imo(to_markdown(_draft()), ch)
+
+
+@pytest.mark.parametrize("text", ["あ", "a", "🎉", "。", "1", "\u200bあ\u200b"])
+def test_見える文字が1つでもあれば差し込める(text):
+    md = set_imo(to_markdown(_draft()), text)
+    assert imo_of(md) is not None
+
+
+def test_不可視文字だけの節は公開しない():
+    md = to_markdown(_draft()).replace(IMO_PROMPT, "\u200b\u3000")
+    assert imo_of(md) is None
+    assert has_imo(md) is True  # プレースホルダは消えているが
+    assert meaningful_text(imo_section_text(md) or "") == ""
+
+
+# --- slug の検証（パス外書き込みの回帰テスト）------------------------------
+
+
+@pytest.mark.parametrize(
+    "slug", ["2026-09-22-example", "abc", "a1-b2.c3", "2026-09-22-a-very-long-slug-name"]
+)
+def test_安全なslug(slug):
+    assert is_safe_slug(slug) is True
+
+
+@pytest.mark.parametrize(
+    "slug",
+    [
+        "../../../evil",
+        "..",
+        "a/b",
+        "a\\b",
+        "ABC",
+        "2026_09",
+        "-leading",
+        ".leading",
+        "",
+        "x" * 130,
+        "a b",
+        "日本語",
+    ],
+)
+def test_危険なslugを弾く(slug):
+    assert is_safe_slug(slug) is False
+
+
+def test_パス外を指すslugではパスを作らない(tmp_path: Path):
+    # 実測で articles_dir / "../../../../evil.md" はリポジトリ直下に解決した
+    target = tmp_path / "articles"
+    target.mkdir()
+    assert article_path(target, "../../../evil") is None
+    assert article_path(target, "2026-09-22-ok") == (target / "2026-09-22-ok.md").resolve()
+
+
+# --- 手書き imo の保護（データ喪失の回帰テスト）----------------------------
+
+
+def test_プレースホルダを消し忘れた手書きimoを検出する():
+    # imo_of は「未記入」と判定するが、上書きすると手書きが消える
+    md = to_markdown(_draft())
+    md = md.replace(IMO_PROMPT, f"{IMO_PROMPT}\n\n面白かった。")
+    assert imo_of(md) is None
+    assert imo_section_text(md) == "面白かった。"
+
+
+def test_プレースホルダだけなら空を返す():
+    assert imo_section_text(to_markdown(_draft())) == ""
+
+
+def test_節が無ければNoneを返す():
+    assert imo_section_text("## 要旨\n\n- a\n") is None

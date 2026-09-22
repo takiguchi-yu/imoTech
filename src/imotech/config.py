@@ -74,6 +74,14 @@ class Settings(BaseSettings):
         default=5 * 1024 * 1024, validation_alias="IMOTECH_MAX_RESPONSE_BYTES"
     )
 
+    # --- Notion ---
+    # Free / Plus は 180 req/min（平均 3 req/sec）。リクエスト間に置く最小間隔
+    notion_min_interval_seconds: float = Field(
+        default=0.35, validation_alias="IMOTECH_NOTION_MIN_INTERVAL"
+    )
+    notion_max_attempts: int = Field(default=3, validation_alias="IMOTECH_NOTION_MAX_ATTEMPTS")
+    notion_timeout_seconds: float = Field(default=30.0, validation_alias="IMOTECH_NOTION_TIMEOUT")
+
     # --- パス ---
     candidates_path: Path = Field(
         default=REPO_ROOT / "data" / "candidates.jsonl",
@@ -84,6 +92,15 @@ class Settings(BaseSettings):
         default=REPO_ROOT / "site" / "src" / "content" / "articles",
         validation_alias="IMOTECH_ARTICLES_DIR",
     )
+
+    @property
+    def notion_enabled(self) -> bool:
+        """Notion を使うかどうか。
+
+        トークンと DB の両方が揃っているときだけ使う。片方だけだと
+        中途半端に失敗するので、揃っていなければ黙って Markdown 直書きに倒す。
+        """
+        return bool(self.notion_token and self.notion_database_id)
 
 
 def load_settings() -> Settings:

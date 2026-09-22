@@ -6,11 +6,14 @@ models の型だけを受け取る（docs/DESIGN.md 1.3 の依存の向き）。
 
 from __future__ import annotations
 
+import json
+import re
 import unicodedata
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
-from .models import ArticleDraft
+from .models import ArticleDraft, DiscoursePoint
 
 JST = timezone(timedelta(hours=9))
 
@@ -178,3 +181,246 @@ def write_article(draft: ArticleDraft, articles_dir: Path) -> tuple[Path, bool]:
 
     path.write_text(to_markdown(draft), encoding="utf-8")
     return path, True
+
+
+IMO_HEADING = "## imo"
+
+# imo の見出し。**サイト側（site/src/lib/imo.ts の IMO_HEADING）と同じ規則**にする。
+# 素朴な部分一致にしていたため、`##  imo`（空白 2 個）や `##\timo` を取りこぼし、
+# 逆に `## imo について` では「について」を imo 本文として取り込んでいた。
+# 判定がずれると「Notion では公開済みなのにサイトに出ない」が起きる。
+_IMO_HEADING_RE = re.compile(r"^##[ \t]+imo[ \t]*$", re.MULTILINE)
+_NEXT_HEADING_RE = re.compile(r"^## ", re.MULTILINE)
+_HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
+
+# 目に見えない文字。str.strip() では落ちない。
+# Cf（書式文字。ゼロ幅スペース U+200B、ゼロ幅非結合子 U+200C、BOM U+FEFF など）、
+# Cc（制御文字）、Zs（空白区切り。全角空白 U+3000 を含む）を対象にする。
+#
+# 貼り付け事故で不可視文字だけが imo に入ると、strip() を通り抜けて
+# 「所感が実質空の記事」が公開される。実測で U+200B / U+200C / U+FEFF が
+# Python 側・サイト側・CI の漏れ検査のすべてを通過した。
+# サイト側（site/src/lib/imo.ts の MEANINGLESS）と同じ規則にしてある。
+_MEANINGLESS_CATEGORIES = frozenset({"Cf", "Cc", "Zs", "Zl", "Zp"})
+
+
+def meaningful_text(text: str) -> str:
+    """目に見える文字だけを残す。imo が実質空かどうかの判定に使う。
+
+    返り値が空文字なら「書かれていない」とみなす。整形のためではなく
+    判定のための関数なので、この返り値を本文として使ってはいけない。
+    """
+    return "".join(
+        ch
+        for ch in text
+        if not ch.isspace() and unicodedata.category(ch) not in _MEANINGLESS_CATEGORIES
+    )
+
+
+def _imo_section(markdown: str) -> tuple[int, int, str] | None:
+    """imo 節の (見出しの開始位置, 本文の開始位置, 本文) を返す。無ければ None。"""
+    m = _IMO_HEADING_RE.search(markdown)
+    if m is None:
+        return None
+    body_start = m.end()
+    rest = markdown[body_start:]
+    nxt = _NEXT_HEADING_RE.search(rest)
+    section = rest[: nxt.start()] if nxt else rest
+    return m.start(), body_start, section
+
+
+def imo_of(markdown: str) -> str | None:
+    """Markdown から imo の中身を取り出す。書かれていなければ None。
+
+    サイト側（site/src/lib/imo.ts の imoOf）と同じ規則。許可リスト方式で、
+    プレースホルダでも HTML コメントでもない文字が 1 文字以上あるときだけ返す。
+    """
+    found = _imo_section(markdown)
+    if found is None:
+        return None
+    _, _, section = found
+    if IMO_PLACEHOLDER in section or IMO_SENTINEL in section:
+        return None
+    text = _HTML_COMMENT_RE.sub("", section).strip()
+    # 不可視文字だけの imo を公開しない
+    return text if meaningful_text(text) else None
+
+
+def set_imo(markdown: str, imo: str) -> str:
+    """Markdown の imo 節を、渡された文章で置き換える。
+
+    Notion で書かれた imo をローカルの Markdown に差し込むために使う。
+    記事の本文は compose が書いたものが正で、Notion からは imo だけを持ってくる。
+    こうすると Notion のブロックから記事を再構成せずに済み、
+    「正となるデータは Git」（docs/DESIGN.md の Q2）も保てる。
+    """
+    text = imo.strip()
+    if not meaningful_text(text):
+        raise ValueError("imo に目に見える文字がない（空白や不可視文字だけでは差し込めない）")
+    if IMO_PLACEHOLDER in text or IMO_SENTINEL in text:
+        raise ValueError("imo にプレースホルダの文言が含まれている")
+
+    found = _imo_section(markdown)
+    if found is None:
+        raise ValueError(f"{IMO_HEADING} の節が見つからない")
+    _, body_start, section = found
+
+    head = markdown[:body_start]
+    nxt = _NEXT_HEADING_RE.search(markdown[body_start:])
+    tail = markdown[body_start:][nxt.start() :] if nxt else ""
+    # 生成時の書式（見出しの次は空行）に揃える。差分が読みやすい
+    return f"{head}\n\n{text}\n" + (f"\n{tail}" if tail else "")
+
+
+def _unquote_yaml(v: str) -> str:
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] == '"':
+        inner = v[1:-1]
+        out, i = [], 0
+        while i < len(inner):
+            if inner[i] == "\\" and i + 1 < len(inner):
+                nxt = inner[i + 1]
+                out.append({"n": "\n", "r": "\r", "t": "\t", '"': '"', "\\": "\\"}.get(nxt, nxt))
+                i += 2
+            else:
+                out.append(inner[i])
+                i += 1
+        return "".join(out)
+    return v
+
+
+def from_markdown(text: str) -> ArticleDraft:
+    """to_markdown の逆変換。既存の Markdown から下書きを復元する。
+
+    Notion へ後から投入する（notion-sync）ために使う。**stance は Markdown に
+    書いていないので復元できない**（Notion のページ本文も stance を使わないため
+    実害はないが、往復で失われる情報として自覚しておく）。
+    url_hash も持っていないので sourceUrl から計算し直す。
+    """
+    from .urlhash import url_hash
+
+    if not text.startswith("---\n"):
+        raise ValueError("フロントマターが無い")
+    block, _, body = text[4:].partition("\n---\n")
+
+    fm: dict[str, str] = {}
+    for line in block.splitlines():
+        if ": " in line:
+            k, v = line.split(": ", 1)
+            fm[k.strip()] = v.strip()
+
+    required = ["title", "sourceUrl", "sourceTitle", "hnUrl", "hatenaUrl", "model"]
+    missing = [k for k in required if k not in fm]
+    if missing:
+        raise ValueError(f"フロントマターに {missing} が無い")
+
+    # _yaml_list の出力は JSON 互換（\\ \" \n \r \t のみエスケープ）なので JSON として読む。
+    # カンマで split すると、タグ自体にカンマが入ったときに壊れる
+    tags_raw = fm.get("tags", "[]").strip()
+    try:
+        parsed = json.loads(tags_raw)
+        tags = [str(t) for t in parsed] if isinstance(parsed, list) else []
+    except json.JSONDecodeError:
+        tags = []
+
+    digest: list[str] = []
+    discourse: list[DiscoursePoint] = []
+    section = None
+    point: str | None = None
+    buf: list[str] = []
+
+    def flush() -> None:
+        nonlocal point, buf
+        if point is not None:
+            discourse.append(DiscoursePoint(point, "\n\n".join(buf).strip(), "mixed"))
+        point, buf = None, []
+
+    for line in body.splitlines():
+        if line.startswith("## "):
+            flush()
+            section = line[3:].strip()
+            continue
+        if section == "元記事の要旨" and line.startswith("- "):
+            digest.append(line[2:].strip())
+        elif section == "議論の論調":
+            if line.startswith("### "):
+                flush()
+                point = line[4:].strip()
+            elif line.strip() and point is not None:
+                buf.append(line.strip())
+    flush()
+
+    source_url = _unquote_yaml(fm["sourceUrl"])
+    generated = fm.get("generatedAt", "")
+    return ArticleDraft(
+        url_hash=url_hash(source_url),
+        title=_unquote_yaml(fm["title"]),
+        slug="",  # 呼び出し側がファイル名から埋める
+        digest=digest,
+        discourse=discourse,
+        tags=tags,
+        source_url=source_url,
+        source_title=_unquote_yaml(fm["sourceTitle"]),
+        hn_url=_unquote_yaml(fm["hnUrl"]),
+        hatena_url=_unquote_yaml(fm["hatenaUrl"]),
+        hn_score=int(fm.get("hnScore", 0)),
+        hn_comments=int(fm.get("hnComments", 0)),
+        model=_unquote_yaml(fm["model"]),
+        generated_at=datetime.fromisoformat(generated.replace("Z", "+00:00"))
+        if generated
+        else None,
+    )
+
+
+def load_article(path: Path) -> ArticleDraft:
+    """Markdown ファイルを読んで下書きにする。slug はファイル名から取る。"""
+    draft = from_markdown(path.read_text(encoding="utf-8"))
+    return replace(draft, slug=path.stem)
+
+
+# slug として許す形。Notion の Slug は人が編集できる rich_text なので、
+# そのままパスに連結すると articles_dir の外に書き込める
+# （実測: articles_dir / "../../../../evil.md" はリポジトリ直下に解決した）。
+_SAFE_SLUG_RE = re.compile(r"^[0-9a-z][0-9a-z.-]{0,119}$")
+
+
+def is_safe_slug(slug: str) -> bool:
+    """パスに連結してよい slug か。"""
+    return bool(_SAFE_SLUG_RE.fullmatch(slug)) and ".." not in slug
+
+
+def article_path(articles_dir: Path, slug: str) -> Path | None:
+    """slug から記事のパスを作る。安全でなければ None。
+
+    形を検査したうえで、解決後のパスが articles_dir の中にあることも確かめる。
+    """
+    if not is_safe_slug(slug):
+        return None
+    path = (articles_dir / f"{slug}.md").resolve()
+    if not path.is_relative_to(articles_dir.resolve()):
+        return None
+    return path
+
+
+def imo_section_text(markdown: str) -> str | None:
+    """imo 節から、プレースホルダを除いた中身を返す。節が無ければ None。
+
+    imo_of との違いは、プレースホルダが残っていても**それ以外の文章があれば
+    それを返す**こと。人がコメント行を消し切れずに所感を書き足した状態を
+    検出して、その文章を Notion の値で上書きしないために使う。
+    """
+    found = _imo_section(markdown)
+    if found is None:
+        return None
+    _, _, section = found
+    section = _HTML_COMMENT_RE.sub("", section)
+    # 閉じていないコメントの残骸と、プレースホルダの説明文も落とす
+    for marker in (IMO_PLACEHOLDER, IMO_SENTINEL):
+        if marker in section:
+            section = "".join(
+                line
+                for line in section.splitlines(keepends=True)
+                if IMO_PLACEHOLDER not in line and IMO_SENTINEL not in line
+            )
+    text = section.strip()
+    return text if meaningful_text(text) else ""

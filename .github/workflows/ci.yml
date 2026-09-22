@@ -76,23 +76,10 @@ jobs:
           SITE_URL: https://example.invalid
 
       # imo 未記入の記事がビルド出力に混ざっていないことを、成果物そのもので確かめる。
-      # ゲートの単体テストが通っていても、経路のどこかで漏れれば意味がない
+      # ゲートの単体テストが通っていても、経路のどこかで漏れれば意味がない。
+      #
+      # 判定はゲート本体（src/lib/imo.ts の imoOf）を呼ぶ。固定句の grep だけだと、
+      # プレースホルダを消して不可視文字だけを書いた記事を取りこぼす
+      # （U+200B / U+FEFF などは trim() を通り抜ける）。
       - name: 未記入の記事が出力に含まれないこと
-        run: |
-          set -euo pipefail
-          leaked=0
-          for f in src/content/articles/*.md; do
-            [ -e "$f" ] || continue
-            slug="$(basename "$f" .md)"
-            if grep -q 'このコメント行を消すまで' "$f"; then
-              if [ -e "dist/articles/$slug/index.html" ]; then
-                echo "::error file=$f::imo 未記入なのに dist/articles/$slug/ が生成されている"
-                leaked=1
-              fi
-              if grep -rq "$slug" dist/rss.xml dist/sitemap-0.xml 2>/dev/null; then
-                echo "::error file=$f::imo 未記入なのに RSS か sitemap に載っている"
-                leaked=1
-              fi
-            fi
-          done
-          [ "$leaked" -eq 0 ] && echo "imo 未記入の記事は出力に含まれていない"
+        run: node scripts/check-unpublished.mjs

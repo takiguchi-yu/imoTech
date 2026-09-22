@@ -153,3 +153,17 @@ class ArticleDraft:
     hn_comments: int = 0
     model: str = ""
     generated_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class ApprovedPage:
+    """Notion 上で承認された記事。
+
+    記事本文は持たない。本文は compose が書いた Markdown が正で、Notion からは
+    人が書いた imo だけを持ってくる（docs/DESIGN.md 1.2c）。
+    """
+
+    page_id: str
+    url_hash: str
+    slug: str
+    imo: str

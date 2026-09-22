@@ -300,6 +300,41 @@ generatedAt: 2026-09-22T06:12:31Z
 
 ## 3. Notion データベーススキーマ
 
+### 3.0 API のバージョンとデータモデル（実装の前提）
+
+| 事実 | 出典 |
+|---|---|
+| `Notion-Version` の現行値は **`2026-03-11`**。必須ヘッダで、欠けると 400 `missing_version` | [versioning](https://developers.notion.com/reference/versioning) |
+| **`POST /v1/databases/{id}/query` は 2025-09-03 版で非推奨。** 代わりに `POST /v1/data_sources/{data_source_id}/query` を使う | [query-a-data-source](https://developers.notion.com/reference/query-a-data-source) |
+| データモデルが変わり、**行とプロパティは database ではなく data source が持つ**。`data_source_id` は `GET /v1/databases/{database_id}` の `data_sources[0].id` から取る | [upgrade-guide-2025-09-03](https://developers.notion.com/guides/get-started/upgrade-guide-2025-09-03) |
+| ページ作成の親は `{"data_source_id": ...}` | [post-page](https://developers.notion.com/reference/post-page) |
+| DB 作成時のプロパティスキーマは `initial_data_source.properties` にネストする | [create-a-database](https://developers.notion.com/reference/create-a-database) |
+| 1 クエリの上限は 10,000 件。到達すると `has_more: false` かつ `request_status.type == "incomplete"` | [query-a-data-source](https://developers.notion.com/reference/query-a-data-source) |
+
+**古いバージョンを指定してはならない。** 動くが非推奨仕様のままになり、`data_source` を使う
+新しい設計（ページ作成時の `data_source_id` など）が使えない。
+
+### 3.0b Notion と Markdown の関係
+
+**Notion は記事本文の正ではない。** 本文は `compose` が書いた Markdown が正で、
+Notion からは**人が書いた imo だけ**を取り出す（`publish`）。
+
+```
+compose → Markdown を書く（## imo は空）
+        → 同じ内容を Notion にも投入（imo プロパティは空）
+人      → Notion で imo を書き、Status を Approved にする
+publish → Notion から imo を読み、ローカルの Markdown に差し込む
+        → Notion 側を Published にする
+```
+
+こうする理由は 2 つ。Notion のブロックから記事を再構成する複雑さを避けられること。
+そして「正となるデータは Git」（Q2 の決定）を保てること。Notion が落ちても、
+Notion の内容を消しても、公開済みの記事は影響を受けない。
+
+**Notion を使わない運用も成立する。** `NOTION_TOKEN` と `NOTION_DATABASE_ID` が
+揃っていなければ Notion の処理は黙って飛ばし、Markdown の `## imo` に直接書く運用になる。
+
+
 ### 3.1 プロパティ一覧
 
 | プロパティ名 | 型 | 設定値 | 誰が書くか | 用途 |
@@ -480,7 +515,7 @@ MODEL_CHAIN = [
 | 事象 | 対処 |
 |---|---|
 | 429 | レスポンスの `Retry-After` ヘッダ（および body の `additional_data.retry_after`）を尊重して待つ。最大 3 回 |
-| 5xx / 529 | 指数バックオフ（1s, 2s, 4s）で最大 3 回 |
+| 5xx / 529 | 指数バックオフで**最大 3 回試行**。待ちは 1 回目の失敗後 1 秒、2 回目の失敗後 2 秒（3 回目が失敗した時点で諦めるので 4 秒待ちには到達しない）。`IMOTECH_NOTION_MAX_ATTEMPTS=4` にすれば 4 秒待ちも入る |
 | 通常時 | リクエスト間に **350 ms** の間隔を入れる（Free/Plus は 180 req/min = 平均 3 req/sec、[request-limits](https://developers.notion.com/reference/request-limits)） |
 | 403 `restricted_resource` + `block_limit` | ワークスペースのブロック上限。**1 人ワークスペースなら無制限**なので、これが出たら「2 人目を招待した」のサイン。Issue のメッセージにこの注意書きを含める |
 
