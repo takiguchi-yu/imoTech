@@ -5,7 +5,7 @@
 記事の Markdown は `uv run imotech compose`（リポジトリのルートで実行）が生成する。
 **手で書くのは `## imo` の節だけ。** それ以外は再生成で上書きされうるものとして扱う。
 
-**前提**: Node.js 22.12 以上（`package.json` の `engines`）。
+**前提**: Node.js 22.18 以上（`package.json` の `engines`）。`npm test` が `.ts` を直接 `node --test` に渡すので、型ストリッピングがデフォルト有効な版（v22.18.0 / v23.6.0 以降）が必要。
 
 ## 使い方
 
