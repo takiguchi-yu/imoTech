@@ -12,7 +12,7 @@ Hacker News で議論を呼んだ英語圏のテック記事を、**元記事の
 - 設計: [docs/DESIGN.md](./docs/DESIGN.md)
 - 進め方とタスク: [.scratch/pipeline/](./.scratch/pipeline/)
 
-**公開 URL: https://imotech.y-takiguti.workers.dev**（独自ドメインは未取得。`*.workers.dev` で進めている）
+**公開 URL: https://imotech.higashi-kaijin.workers.dev**（独自ドメインは未取得。`*.workers.dev` で進めている）
 
 ## いまの状態
 
@@ -361,7 +361,7 @@ gh run list --workflow daily.yml --limit 5     # 実行されているか
 
 **ドメインは未確定のあいだ `*.workers.dev` で進める。** 収益化（AdSense の ads.txt）には
 ルートドメインが必要だが、それは M5 の話で、公開そのものには要らない。
-いまの公開先は **https://imotech.y-takiguti.workers.dev**。
+いまの公開先は **https://imotech.higashi-kaijin.workers.dev**。
 
 **デプロイは `publish.yml` が `wrangler deploy` で行う。** Workers Builds の Git 連携は
 使わない — Cloudflare 側でビルドが落ちると Actions は成功してしまい、失敗が Issue に乗らない

@@ -296,7 +296,7 @@ CI は `35684...`（`d8d6874`）で green。
 
 ## 公開できた（2026-09-22）
 
-**https://imotech.y-takiguti.workers.dev**
+**https://imotech.higashi-kaijin.workers.dev**
 
 `wrangler login` → `wrangler deploy` で 1 回目のデプロイを通し、出力された URL を
 `SITE_URL` に入れて再ビルド・再デプロイした（1 回目は `SITE_URL` 無しでビルドしたため
@@ -307,13 +307,13 @@ $ npx wrangler deploy
 ✨ Success! Uploaded 8 files (1.76 sec)
 Uploaded imotech (4.55 sec)
 Deployed imotech triggers (0.66 sec)
-  https://imotech.y-takiguti.workers.dev
+  https://imotech.higashi-kaijin.workers.dev
 
-$ SITE_URL=https://imotech.y-takiguti.workers.dev npm run build
+$ SITE_URL=https://imotech.higashi-kaijin.workers.dev npm run build
 $ grep -o 'https://[^<]*' dist/sitemap-0.xml | head -3
-https://imotech.y-takiguti.workers.dev/
-https://imotech.y-takiguti.workers.dev/about/
-https://imotech.y-takiguti.workers.dev/privacy/
+https://imotech.higashi-kaijin.workers.dev/
+https://imotech.higashi-kaijin.workers.dev/about/
+https://imotech.higashi-kaijin.workers.dev/privacy/
 ```
 
 ### 公開 URL の実測
@@ -343,7 +343,7 @@ GEMINI_API_KEY         2026-09-22T02:40:08Z
 NOTION_DATABASE_ID     2026-09-22T02:40:10Z
 NOTION_TOKEN           2026-09-22T02:40:09Z
 $ gh variable list
-SITE_URL  https://imotech.y-takiguti.workers.dev
+SITE_URL  https://imotech.higashi-kaijin.workers.dev
 ```
 
 **残りは `CLOUDFLARE_API_TOKEN`**（「Edit Cloudflare Workers」テンプレートで発行）。
@@ -377,7 +377,7 @@ commit: `47dfa2a chore: publish approved articles (2026-09-22)`（`github-action
 ### 公開結果の実測
 
 ```
-$ curl -o /dev/null -w "%{http_code}" https://imotech.y-takiguti.workers.dev/articles/2026-09-22-private-equity-medical-practices-ban/
+$ curl -o /dev/null -w "%{http_code}" https://imotech.higashi-kaijin.workers.dev/articles/2026-09-22-private-equity-medical-practices-ban/
 200
 $ curl .../articles/.../ | grep -oE "なるほど"
 なるほど                      # imo が表示されている
@@ -406,3 +406,48 @@ $ curl .../sitemap-0.xml | grep -c private-equity
 ### 残っているのは cron の実行確認だけ
 
 次回の cron は毎時 23 分。`gh run list --workflow publish.yml` で `event == "schedule"` を探す。
+
+---
+
+## workers.dev サブドメインを変更した（2026-09-22 05:09 UTC）
+
+`imotech.y-takiguti.workers.dev` → **`imotech.higashi-kaijin.workers.dev`**
+
+URL は `<Worker 名>.<アカウントのサブドメイン>.workers.dev` の形。前半は
+`site/wrangler.jsonc` の `name` だが、**後半はアカウント全体のサブドメイン**で
+ダッシュボードからしか変更できない（公式に API / wrangler コマンドの記載が無く、
+`wrangler --help` の全コマンドにも無い）。変更場所は
+**Workers & Pages → 「Your subdomain」の隣の Change**
+（[workers-dev](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)）。
+
+### 実測（未確認だった点が解消した）
+
+**旧 URL は DNS ごと消える。リダイレクトはされない。**
+
+```
+$ curl https://imotech.y-takiguti.workers.dev/
+curl: (6) Could not resolve host: imotech.y-takiguti.workers.dev
+```
+
+公式ドキュメントに変更後の挙動の記載が無かったため未確認としていた点。
+**変更するなら、外部に URL を出す前にやるべき**（被リンクや RSS の購読者がいると全部切れる）。
+
+### 新サブドメインは TLS 証明書の発行を待つ
+
+DNS はすぐ引けるようになったが、TLS ハンドシェイクが失敗する時間帯があった。
+
+```
+$ dig +short @8.8.8.8 imotech.higashi-kaijin.workers.dev
+172.67.156.209
+104.21.32.237                    # DNS は解決する
+$ curl https://imotech.higashi-kaijin.workers.dev/
+curl: (35) ... sslv3 alert handshake failure     # 証明書がまだ
+```
+
+`*.<サブドメイン>.workers.dev` の証明書が発行されるまでの待ちと見られる。
+
+### 変更に伴って直したもの
+
+- `gh variable set SITE_URL`（Actions のビルドが sitemap と RSS に焼き込む絶対 URL）
+- ローカルから `SITE_URL=... npm run build && wrangler deploy` で再生成・再デプロイ
+- `README.md` 2 箇所 / `docs/DESIGN.md` 1 箇所 / `M0-setup.md` 1 箇所 / このファイル 8 箇所

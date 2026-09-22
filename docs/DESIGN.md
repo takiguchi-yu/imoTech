@@ -588,7 +588,7 @@ GET https://hn.algolia.com/api/v1/search_by_date
 
 | 名前 | 用途 |
 |---|---|
-| `SITE_URL` | `astro build` が sitemap と RSS に焼き込む絶対 URL。現在は `https://imotech.y-takiguti.workers.dev` |
+| `SITE_URL` | `astro build` が sitemap と RSS に焼き込む絶対 URL。現在は `https://imotech.higashi-kaijin.workers.dev` |
 
 **デプロイは Actions から `wrangler deploy` を叩く。** Workers Builds の Git 連携ではなく、
 `publish.yml` の中でビルドしてデプロイする。理由は 3 つ。

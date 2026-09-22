@@ -42,7 +42,7 @@
   （`.dev` は年 $10 前後。公式の TLD 価格表ページは 404 のため、ダッシュボードで実額を見るしかない）
 - [ ] 決めたドメインを取得し、`docs/DESIGN.md` と `README.md` に記載した
 - [x] （ドメインを後回しにする場合）M0〜M4 は `*.workers.dev` で進める判断を README に 1 行残した
-      （公開先は https://imotech.y-takiguti.workers.dev。独自ドメインは収益化に必要になる M5 で取る）
+      （公開先は https://imotech.higashi-kaijin.workers.dev。独自ドメインは収益化に必要になる M5 で取る）
 
 ## 見つけたときの状況
 
