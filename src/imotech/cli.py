@@ -227,6 +227,10 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
         return 0
 
     notion, notion_ds = _open_notion(settings, dry_run=args.dry_run)
+    # 使うつもりだったのに開けなかった（トークン失効・DB ID の誤り・インテグレーション
+    # 未接続）。_open_notion は warn を出して Markdown 直書きに倒すので、ここで拾わないと
+    # 無人実行では誰も気づかない
+    notion_unavailable = settings.notion_enabled and not args.dry_run and notion is None
 
     no_content: list[Candidate] = []
     drafted: list[Candidate] = []
@@ -236,6 +240,7 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
     # 標準エラーの warn だけで知る術がない（docs/DESIGN.md 5.5 の失敗検知）
     notion_ok: list[Candidate] = []
     notion_failed: list[Candidate] = []
+    notion_block_limit = False
     with ArticleFetcher(
         user_agent=USER_AGENT,
         timeout=settings.http_timeout_seconds,
@@ -316,7 +321,7 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
                 _p("      （この記事の生成結果は破棄しました。次回は生成しません）")
             # Notion が設定されていればレビュー面としても投入する。
             # 記事本文の正はあくまで Markdown で、Notion からは imo だけを持ってくる
-            if notion is not None and not args.dry_run:
+            if notion is not None:
                 try:
                     c.notion_page_id = notion.create_draft(
                         notion_ds, result.draft, collected_at=c.collected_at
@@ -326,6 +331,7 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
                 except NotionBlockLimitError as e:
                     _p(f"      [warn] {e}", err=True)
                     notion_failed.append(c)
+                    notion_block_limit = True
                     # 以降の候補で繰り返し叩かない。参照を捨てる前に閉じる
                     notion.close()
                     notion = None
@@ -374,13 +380,32 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
 
     # ここから終了コードの判定。無人実行（daily.yml）はこれだけを見て Issue を立てる。
     #
-    # 部分的な失敗は 0 で返す — 失敗した候補は pending に残り、次回の実行が拾う。
-    # 1 件ごとに Issue が立つと通知が意味を失う（docs/DESIGN.md 5.5）。
-    # 非 0 にするのは、次回も同じ結果になる＝人が直すまで回復しない失敗だけ。
-    if failed and not drafted:
+    # 境目は「この実行で記事化が 0 件だったか」と「Notion が使えたか」。
+    # 1 件ごとに非 0 を返すと Issue が乱立して通知が意味を失い、逆に記事が 1 本も出ない
+    # 日を 0 で返すと、止まっていることに誰も気づかない（docs/DESIGN.md 5.5）。
+    #
+    # 本文を取得できなかっただけ（no_content）は非 0 にしない。元記事側の事情であり、
+    # その候補は skipped になるので次回は別の候補が選ばれる。
+    if (failed or empty) and not drafted:
         _p(
-            f"生成が {len(failed)} 件すべて失敗し、記事化できたものがありません。"
-            "Gemini 側の障害かキーの失効が疑われます。",
+            f"記事化できたものがありません（生成失敗 {len(failed)} / 内容不足 {len(empty)}）。"
+            "Gemini 側の障害、キーの失効、プロンプトやスキーマの破損が疑われます。",
+            err=True,
+        )
+        return 1
+    if notion_unavailable:
+        _p(
+            "Notion を使う設定（NOTION_TOKEN と NOTION_DATABASE_ID が両方ある）なのに "
+            "開けませんでした。トークンの失効、DB ID の誤り、インテグレーションが DB に "
+            "接続されていないかを確認してください。Markdown の書き出しは済んでいます。",
+            err=True,
+        )
+        return 1
+    if notion_block_limit:
+        _p(
+            "Notion のブロック上限に達しました。Free プランは生涯 1,000 ブロックで、"
+            "課金するかワークスペースを作り直すまで投入できません。"
+            "Markdown の書き出しは済んでいるので、`## imo` に直接書けば公開できます。",
             err=True,
         )
         return 1

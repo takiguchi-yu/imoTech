@@ -563,11 +563,14 @@ GET https://hn.algolia.com/api/v1/search_by_date
 | 事象 | 対処 |
 |---|---|
 | ジョブ失敗 | `if: failure()` で `.github/actions/notify-failure`（composite action）を呼ぶ。**同じラベル `pipeline-failure` の open issue があればコメント追記**して乱立を防ぐ。`publish.yml` からも同じ action を使う |
-| 失敗を exit code に翻訳する | `if: failure()` はステップの終了コードしか見ない。`compose` は Gemini の失敗も Notion の 403 も捕まえて続行するため、**そのままでは全滅しても 0 で終わる**。そこで「人が直すまで回復しない失敗」＝ **生成が全滅して記事化 0 件**／**Notion 投入が全滅**のときだけ非 0 を返す（`src/imotech/cli.py` の `cmd_compose` 末尾）。部分的な失敗は 0 のまま — pending に残り次回が拾うので、1 件ごとに Issue が立つと通知が意味を失う |
+| 失敗しても exit 0 で終わる | `if: failure()` はステップの終了コードしか見ない。`compose` は Gemini の失敗も Notion の 403 も捕まえて続行するため、**そのままでは全滅しても 0 で終わる**。そこで「人が直すまで回復しない失敗」＝ **生成が全滅して記事化 0 件**／**Notion 投入が全滅**のときだけ非 0 を返す（`src/imotech/cli.py` の `cmd_compose` 末尾）。部分的な失敗は 0 のまま — pending に残り次回が拾うので、1 件ごとに Issue が立つと通知が意味を失う |
 | schedule の遅延・drop | 状態を時刻ではなく `state` / `Status` で持っているため、1 回飛んでも次回が拾う。`MAX_AGE_HOURS=96` があるので、3 回連続で飛んでも取りこぼさない |
 | 60 日無活動での自動停止 | **`daily.yml` が毎日 `candidates.jsonl` を commit するため、無活動状態にならない**（public repo の schedule は「no repository activity in 60 days」で停止する。[docs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)） |
 | ワークフローの多重実行 | `concurrency: { group: <workflow>, cancel-in-progress: false }` |
 | commit の競合 | push 前に `git pull --rebase origin main`。`daily.yml` は `data/candidates.jsonl` と **`site/src/content/articles/` の新規ファイル**、`publish.yml` は既存記事の `## imo` を書き換える。同じ記事ファイルに同時に当たらない限り rebase で解決でき、当たった場合はジョブが失敗して Issue が立つ |
+| timeout / キャンセルで通知が出ない | `if: failure()` は timeout（`timeout-minutes` 到達）や手動キャンセルでは真にならない。`if: ${{ failure() \|\| cancelled() }}` で両方を拾う（[expressions](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions) の `cancelled()` は「ワークフローがキャンセルされたら true」） |
+| 通知が 2 本立つ | `daily.yml` と `publish.yml` がほぼ同時に失敗すると、双方が open issue を見つけられず Issue が 2 本立つ。GitHub API に「無ければ作る」の原子操作が無いので避けられない。**実害は Issue 2 本なので許容する** |
+| 自動 commit に CI が当たらない | `GITHUB_TOKEN` による push は新しいワークフロー実行を作らない（[公式](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)。再帰実行の防止）。`ci.yml` の公開ゲート検証は自動 commit をすり抜けるが、公開の可否を決めるのはサイト側のゲート（`site/src/lib/imo.ts`）なので、未記入記事の漏洩には至らない |
 | 失敗通知が届かない | 公式の通知は「自分がトリガーした実行」が対象で、schedule はワークフロー作成者に飛ぶ。cron を編集すると通知先が移る（[notifications](https://docs.github.com/en/actions/concepts/workflows-and-actions/notifications-for-workflow-runs)）。**Issue 起票を一次の通知手段とし、メール通知には依存しない** |
 
 **Secrets**（すべて GitHub Secrets に登録。public repo でもログには出ない）:

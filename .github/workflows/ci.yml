@@ -47,6 +47,12 @@ jobs:
     defaults:
       run:
         working-directory: site
+    # astro.config.mjs は CI で SITE_URL が無いと落ちる（localhost の URL が
+    # sitemap と RSS に焼き込まれたまま公開されるのを防ぐガード）。config を読むのは
+    # check と build の両方なので、ステップ単位ではなくジョブ全体に渡す。
+    # ドメイン確定までは仮の値を入れ、ガードが効いていることも同時に確かめる
+    env:
+      SITE_URL: https://example.invalid
     steps:
       - uses: actions/checkout@v4
 
@@ -73,11 +79,7 @@ jobs:
         run: npm run check
 
       - name: ビルド
-        # CI では SITE_URL が必須（未設定だと localhost の URL が sitemap と RSS に入る）。
-        # ドメイン確定までは仮の値を入れて、ガードが効いていることも同時に確かめる。
         run: npm run build
-        env:
-          SITE_URL: https://example.invalid
 
       # imo 未記入の記事がビルド出力に混ざっていないことを、成果物そのもので確かめる。
       # ゲートの単体テストが通っていても、経路のどこかで漏れれば意味がない。

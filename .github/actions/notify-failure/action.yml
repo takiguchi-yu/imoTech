@@ -21,23 +21,25 @@ runs:
   using: composite
   steps:
     # ラベルが無いリポジトリで `gh issue create --label` はエラーになる。
-    # --force は既存なら更新するだけなので、毎回実行しても増えない
+    # 既存なら何もしない（--force を付けると、人が変えた色や説明を毎回書き戻す）。
+    # ここで失敗しても起票は試したいので、`|| true` で飲む
     - name: ラベルを用意する
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
         LABEL: ${{ inputs.label }}
       run: |
-        set -euo pipefail
         gh label create "$LABEL" \
           --color B60205 \
           --description "自動実行パイプラインの失敗" \
-          --force
+          || echo "ラベルは既にあるか、作れませんでした（起票は続けます）"
 
     - name: Issue を起票、または既存にコメントする
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
         LABEL: ${{ inputs.label }}
         CAUSES: ${{ inputs.causes }}
         WORKFLOW: ${{ github.workflow }}
@@ -45,15 +47,17 @@ runs:
         RUN_ATTEMPT: ${{ github.run_attempt }}
         EVENT: ${{ github.event_name }}
       run: |
-        set -euo pipefail
+        set -uo pipefail
 
         # 失敗したステップ名を実行の記録から取る。呼び出し側に書かせると、
-        # ステップを増やしたときに更新を忘れて嘘の原因が載る
+        # ステップを増やしたときに更新を忘れて嘘の原因が載る。
+        # ここで落ちても起票は続ける（set -e を効かせないのはそのため）
         failed_steps="$(
           gh run view "$GITHUB_RUN_ID" --json jobs \
-            --jq '[.jobs[] | .steps[] | select(.conclusion == "failure") | .name] | join(", ")'
-        )"
-        [ -n "$failed_steps" ] || failed_steps="（記録に失敗したステップが無い。ジョブ自体の異常か timeout）"
+            --jq '[.jobs[] | .steps[] | select(.conclusion == "failure") | .name] | join(", ")' \
+            2>/dev/null
+        )" || failed_steps=""
+        [ -n "$failed_steps" ] || failed_steps="（特定できず。ジョブ自体の異常か timeout / キャンセル）"
 
         body="$(cat <<EOF
         \`$WORKFLOW\` が失敗しました。
@@ -69,6 +73,12 @@ runs:
 
         $CAUSES
 
+        ## 調べ方
+
+        \`\`\`bash
+        gh run view $GITHUB_RUN_ID --log-failed   # 失敗したステップのログ
+        \`\`\`
+
         ---
 
         この Issue は \`.github/actions/notify-failure\` が自動で起票しています。
@@ -78,8 +88,11 @@ runs:
         )"
         existing="$(
           gh issue list --label "$LABEL" --state open --limit 1 \
-            --json number --jq '.[0].number // empty'
-        )"
+            --json number --jq '.[0].number // empty' 2>/dev/null
+        )" || existing=""
+
+        # ここから先は失敗を隠さない。通知が出ないこと自体が最も困る
+        set -e
 
         if [ -n "$existing" ]; then
           echo "既存の Issue #$existing にコメントを追記します"

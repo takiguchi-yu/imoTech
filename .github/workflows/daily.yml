@@ -29,7 +29,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # rebase で履歴をたどるため浅い clone にしない
+          # shallow clone のまま rebase すると unshallow が要る場面があるので、
+          # 安全側に振って全履歴を取る。1 日 1 commit なので当面は軽い
           fetch-depth: 0
 
       - name: uv をセットアップ
@@ -74,20 +75,49 @@ jobs:
             exit 0
           fi
 
-          git commit -m "chore: update candidates ($(date -u '+%Y-%m-%d'))"
+          # 実行は 06:17 JST。UTC で打つと毎回前日の日付になる
+          git commit -m "chore: update candidates ($(TZ=Asia/Tokyo date '+%Y-%m-%d'))"
 
-          # publish.yml が同時に site/ を触りうるので、push 前に取り込む
-          git pull --rebase origin "${GITHUB_REF_NAME}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          # publish.yml が同時に site/ を触りうるので、push 前に取り込む。
+          # 取り込んだ直後にさらに push が入ることもあるので数回試す
+          for attempt in 1 2 3; do
+            if ! git pull --rebase origin "${GITHUB_REF_NAME}"; then
+              git rebase --abort || true
+              echo "::error::rebase が競合しました。ローカルで解決してから push し直してください"
+              exit 1
+            fi
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+              exit 0
+            fi
+            echo "push が弾かれました。取り込み直します（${attempt} 回目）"
+          done
+          echo "::error::3 回試しても push できませんでした"
+          exit 1
 
+      # timeout（20 分）や手動キャンセルでは failure() は真にならない。
+      # cancelled() は「ワークフローがキャンセルされたら true」
+      # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
       - name: 失敗を通知する
-        if: failure()
+        if: ${{ failure() || cancelled() }}
         uses: ./.github/actions/notify-failure
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           causes: |
-            - **Gemini が 429**: 無料枠の 1 日あたり上限に当たった。`IMOTECH_MAX_DRAFTS_PER_RUN` を下げるか、翌日まで待つ
-            - **Notion が 403**: ブロック上限（Free は生涯 1,000 ブロック）、インテグレーションが DB に接続されていない、`NOTION_DATABASE_ID` が誤っている、のいずれか
-            - **Hacker News が 5xx**: Algolia 側の一時障害。3 回リトライしても駄目なら候補 0 件で終わる（これ自体では失敗にならない）
-            - **`git pull --rebase` が競合**: `publish.yml` と同じ記事ファイルを同時に触った。ローカルで rebase して解決する
-            - **timeout（20 分）**: pending が育ちすぎている。`IMOTECH_MAX_PROBES_PER_RUN` と `IMOTECH_PROBE_BUDGET` を見直す
+            上から順に疑う。ログの stderr に、どれに当たったかが出ている。
+
+            - **`GEMINI_API_KEY` が未設定か失効**（ログに「GEMINI_API_KEY が未設定です」／終了コード 2）
+              → `gh secret list` で更新日を見て `gh secret set GEMINI_API_KEY`
+            - **Gemini が全滅**（ログに「記事化できたものがありません」）
+              → キーの失効か無料枠切れ。429 が続くなら、このワークフローの compose ステップの
+              `env` に `IMOTECH_MAX_DRAFTS_PER_RUN: 3` を足して本数を下げる
+            - **Notion を開けない**（ログに「Notion を使う設定なのに開けませんでした」）
+              → `NOTION_DATABASE_ID` の誤り、トークン失効、インテグレーションが DB に未接続。
+              Markdown は書けているので、急ぐなら `## imo` に直接書けば公開できる
+            - **Notion のブロック上限**（Free は生涯 1,000 ブロック）
+              → 課金するか、以降は Markdown に直接書く運用に切り替える
+            - **`git pull --rebase` が競合**
+              → `publish.yml` と同じ記事ファイルを同時に触った。`git pull --rebase` で解決して
+              から `gh workflow run daily.yml`
+            - **timeout（20 分）またはキャンセル**
+              → pending が育ちすぎている。`uv run imotech stats` で件数を見て、compose ステップの
+              `env` に `IMOTECH_MAX_PROBES_PER_RUN` を足して絞る

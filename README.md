@@ -16,7 +16,7 @@ Hacker News で議論を呼んだ英語圏のテック記事を、**元記事の
 
 | マイルストーン | 状態 |
 |---|---|
-| M0 準備 | API キーは完了。**実 RPD の確認**（AI Studio が組織で無効化されており実測で代替）・GitHub リポジトリ・Notion・Cloudflare・ドメイン確定が残り |
+| M0 準備 | API キー・GitHub リポジトリ（public）・Notion は完了。**実 RPD の確認**（AI Studio が組織で無効化されており実測で代替）・Cloudflare・ドメイン確定が残り |
 | **M1 ローカルで収集〜生成が通る** | **完了** |
 | **ローカル通し（Notion を飛ばして localhost まで）** | **完了** — `compose` が Markdown を書き、Astro でサイトが出る |
 | **M2 Notion 連携** | **完了** — `notion-setup` / `notion-sync` / `publish`。Notion を使わない運用も引き続き成立する |
@@ -53,7 +53,7 @@ GitHub Actions 上では不要。
 `data/candidates.jsonl` は **git 管理下**で、`collect` / `compose` が書き換える。
 
 - ローカルで試すときは `IMOTECH_CANDIDATES_PATH=/tmp/try.jsonl` を付けて別ファイルに逃がす
-- M3 以降は GitHub Actions が毎日この更新をコミットする（それが public repo の schedule を
+- GitHub Actions が毎日この更新をコミットする（それが public repo の schedule を
   60 日無活動で止めさせない仕掛けも兼ねる）
 
 **まず試すとき**は、候補ストアを一時ファイルに逃がす（`data/candidates.jsonl` は git 管理下）。
@@ -262,14 +262,18 @@ gh run watch
 
 ### Secrets の登録
 
-`.env` と同じ 3 つを GitHub 側にも入れる。**値を履歴に残さない**よう標準入力で渡す。
+**`GEMINI_API_KEY` だけが必須。** `NOTION_TOKEN` と `NOTION_DATABASE_ID` は Notion を
+レビュー面に使うときだけ入れる（未登録なら空文字が渡り、Notion を飛ばして Markdown 直書きで
+動く）。引数なしで打つと**値を貼り付けるプロンプトが出る**ので、コマンド履歴に残らない。
 
 ```bash
-gh secret set GEMINI_API_KEY     # 入力してから Ctrl-D
+gh secret set GEMINI_API_KEY     # プロンプトに値を貼って Enter
 gh secret set NOTION_TOKEN
 gh secret set NOTION_DATABASE_ID
 gh secret list                   # 名前と更新日だけが見える
 ```
+
+ファイルから入れるときは `gh secret set GEMINI_API_KEY < key.txt`。
 
 `GITHUB_TOKEN` は登録しない（Actions が実行ごとに自動発行する）。`CLOUDFLARE_API_TOKEN` も
 不要 — Workers Builds の Git 連携が push を検知するので、Actions からデプロイを叩かない。
@@ -281,17 +285,47 @@ gh secret list                   # 名前と更新日だけが見える
 同じラベルの open issue があれば**コメントが追記される**だけで、Issue は増えない。
 
 ```bash
-gh issue list --label pipeline-failure
+gh issue list --label pipeline-failure           # 立っている Issue
+gh run list --workflow daily.yml --limit 5       # 直近の実行
+gh run view <id> --log-failed                    # 失敗したステップのログ
+gh workflow run daily.yml                        # 直したら回し直す
 ```
 
 直したら Issue を close する。次の失敗で新しい Issue が立つ。
 
-**何が「失敗」になるか**は `compose` の終了コードで決まる。1 件生成に失敗しただけでは失敗に
-しない（pending に残り次回が拾う）。非 0 になるのは、人が直すまで回復しないものだけ:
+**何が「失敗」になるか**は `compose` の終了コードで決まる。境目は「この実行で記事化が 0 件
+だったか」と「Notion が使えたか」。5 本のうち 1 本が生成に失敗しただけなら失敗にしない
+（その候補は pending に残り、次回が拾う）。非 0 になるのは:
 
-- 生成が全滅して記事化 0 件（Gemini のキー失効・無料枠切れ）
-- Notion への投入が全滅（トークン失効・`NOTION_DATABASE_ID` の誤り・ブロック上限）
-- `GEMINI_API_KEY` が未設定（終了コード 2）
+| 条件 | 終了コード | 直し方 |
+|---|---|---|
+| `GEMINI_API_KEY` が未設定 | 2 | `gh secret list` で更新日を見て `gh secret set GEMINI_API_KEY` |
+| 記事化が 0 件（生成失敗か内容不足で全滅） | 1 | Gemini のキー失効・無料枠切れ、または `src/imotech/prompts/compose.md` とレスポンススキーマの破損 |
+| Notion を開けなかった | 1 | トークン失効、`NOTION_DATABASE_ID` の誤り、インテグレーションが DB に未接続 |
+| Notion のブロック上限 | 1 | Free は生涯 1,000 ブロック。課金するか、Markdown の `## imo` に直接書く |
+| Notion への投入が全滅 | 1 | 上 2 つと同じ原因を疑う |
+
+**本文が取れなかっただけ**なら失敗にしない。元記事側の事情で、その候補は `skipped` になり
+次回は別の候補が選ばれる。
+
+### 記事が出ない日
+
+Issue が立っていないのに記事が増えていないなら、多くは正常である。
+
+- **熟成待ち** — 収集から 24 時間（`IMOTECH_MATURATION_HOURS`）経たないと記事化の対象にならない
+- **閾値未達** — points 100 / comments 30（`IMOTECH_MIN_SCORE` / `IMOTECH_MIN_COMMENTS`）を
+  満たす候補がない日は、薄い記事を作らずに 0 本で終わる
+- **imo 未記入** — 記事は書き出されているが、所感を書くまでサイトには出ない
+
+```bash
+uv run imotech stats                          # 候補の状態と分布
+uv run imotech status                          # imo 未記入の記事
+gh run list --workflow daily.yml --limit 5     # 実行されているか
+```
+
+`stats` の pending が増え続けているなら閾値が厳しすぎる。`status` に記事が溜まっているなら、
+自分が imo を書いていないだけ。実行の履歴が飛んでいるなら cron が drop されている
+（`IMOTECH_MAX_AGE_HOURS=96` の猶予があるので、3 回続けて飛ばない限り取りこぼさない）。
 
 ## 開発
 

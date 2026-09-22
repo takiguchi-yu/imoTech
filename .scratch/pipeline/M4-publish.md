@@ -47,7 +47,11 @@ Workers Builds の Git 連携がそれを検知してサイトをビルド・公
 - [ ] `site/src/content/articles/<slug>.md` を書き、`git pull --rebase` してから push するステップを書いた
 - [ ] 同じ slug のファイルが既にあるとき、上書きせずスキップして Notion の Status だけ更新する実装にした
 - [ ] 承認が 0 件のとき、commit を試みずに正常終了することを確認した
-- [ ] 失敗時の Issue 起票を `daily.yml` と同じ形で入れた
+- [ ] 失敗時の Issue 起票を `.github/actions/notify-failure` で入れた（`daily.yml` と同じ composite action。`causes` だけ publish 用に差し替える）
+- [ ] `if: ${{ failure() || cancelled() }}` にした（timeout とキャンセルでは `failure()` が真にならない）
+- [ ] **`publish.yml` から `data/candidates.jsonl` を書かない**ことを確認した
+      （`store.save` は JSONL を全行書き直すため、`daily.yml` と同時に走ると rebase が
+      行単位で解決できず競合する。publish が触るのは記事 Markdown と Notion だけに留める）
 
 ### Cloudflare Workers + Static Assets
 - [ ] `site/wrangler.jsonc` に `assets` の設定を書いた

@@ -135,18 +135,26 @@ class _FakeHN:
         return story, []
 
 
-class _FakeFetcher:
-    def __init__(self, **_kw) -> None:
-        pass
+def _fake_fetcher_class(outcomes: list | None):
+    """ArticleFetcher の差し替え。outcomes に None を混ぜると本文取得の失敗になる。"""
+    seq = list(outcomes) if outcomes is not None else None
 
-    def __enter__(self):
-        return self
+    class _F:
+        def __init__(self, **_kw) -> None:
+            pass
 
-    def __exit__(self, *_a) -> bool:
-        return False
+        def __enter__(self):
+            return self
 
-    def fetch(self, _url: str) -> ArticleSource:
-        return ArticleSource(text="本文" * 100, via="test")
+        def __exit__(self, *_a) -> bool:
+            return False
+
+        def fetch(self, _url: str) -> ArticleSource | None:
+            if seq is None:
+                return ArticleSource(text="本文" * 100, via="test")
+            return seq.pop(0)
+
+    return _F
 
 
 class _FakeNotion:
@@ -201,13 +209,20 @@ def _compose_env(
     candidates: int,
     llm_outcomes: list,
     notion_outcomes: list | None,
+    fetch_outcomes: list | None = None,
+    notion_configured: bool = False,
+    dry_run: bool = False,
 ) -> tuple[Settings, object, _FakeNotion | None]:
-    """compose を外部通信なしで動かすための一式を組む。"""
+    """compose を外部通信なしで動かすための一式を組む。
+
+    notion_configured は「設定は揃っている」状態。notion_outcomes を None にすると、
+    設定はあるのに _open_notion が開けなかった状況（トークン失効・DB ID の誤り）になる。
+    """
     store = CandidateStore(tmp_path / "c.jsonl")
     store.append_new([_c(f"h{i}") for i in range(candidates)])
 
     monkeypatch.setattr("imotech.cli.HackerNews", _FakeHN)
-    monkeypatch.setattr("imotech.cli.ArticleFetcher", _FakeFetcher)
+    monkeypatch.setattr("imotech.cli.ArticleFetcher", _fake_fetcher_class(fetch_outcomes))
     monkeypatch.setattr("imotech.llm.DraftGenerator", _fake_generator_class(llm_outcomes))
 
     notion = _FakeNotion(notion_outcomes) if notion_outcomes is not None else None
@@ -217,10 +232,11 @@ def _compose_env(
         candidates_path=tmp_path / "c.jsonl",
         articles_dir=tmp_path / "articles",
         gemini_api_key="dummy",
-        notion_token="",
-        notion_database_id="",
+        notion_token="t" if notion_configured else "",
+        notion_database_id="d" if notion_configured else "",
     )
-    args = build_parser().parse_args(["compose"])
+    argv = ["compose", "--dry-run"] if dry_run else ["compose"]
+    args = build_parser().parse_args(argv)
     return settings, args, notion
 
 
@@ -287,14 +303,93 @@ def test_composeはNotion投入が1件でも通れば0を返す(tmp_path, monkey
     assert cmd_compose(settings, args) == 0
 
 
-def test_composeはブロック上限でも全滅なら1を返す(tmp_path, monkeypatch):
-    # ブロック上限に当たると以降の候補では Notion を叩かない（notion=None になる）。
-    # 1 件目で打ち切られても、成功が 0 件なら人が課金するまで回復しない
+def test_composeはブロック上限なら成功があっても1を返す(tmp_path, monkeypatch, capsys):
+    # ブロック上限は人が課金するまで回復しない。その日たまたま 1 件通っていても、
+    # 翌日まで黙っていると上限に気づくのが遅れる。
+    # 上限に当たると以降の候補では Notion を叩かない（notion=None になる）ので、
+    # outcomes は 2 件目を渡していない
     settings, args, _ = _compose_env(
         tmp_path,
         monkeypatch,
         candidates=2,
         llm_outcomes=[_generation_result("h0"), _generation_result("h1")],
-        notion_outcomes=[NotionBlockLimitError("block limit")],
+        notion_outcomes=["page-id", NotionBlockLimitError("block limit")],
     )
     assert cmd_compose(settings, args) == 1
+    assert "ブロック上限" in capsys.readouterr().err
+
+
+def test_composeはNotionを開けなかったら1を返す(tmp_path, monkeypatch, capsys):
+    # 不正な NOTION_DATABASE_ID とトークン失効はここに落ちる。_open_notion が
+    # warn を出して Markdown 直書きに倒すため、create_draft には到達しない
+    settings, args, _ = _compose_env(
+        tmp_path,
+        monkeypatch,
+        candidates=1,
+        llm_outcomes=[_generation_result("h0")],
+        notion_outcomes=None,
+        notion_configured=True,
+    )
+    assert cmd_compose(settings, args) == 1
+    assert "NOTION_DATABASE_ID" in capsys.readouterr().err
+
+
+def test_composeはNotion未設定なら開けなくても0を返す(tmp_path, monkeypatch):
+    # Notion を使わない運用。設定が無いのだから失敗ではない
+    settings, args, _ = _compose_env(
+        tmp_path,
+        monkeypatch,
+        candidates=1,
+        llm_outcomes=[_generation_result("h0")],
+        notion_outcomes=None,
+        notion_configured=False,
+    )
+    assert cmd_compose(settings, args) == 0
+
+
+def test_composeは内容不足で全滅したら1を返す(tmp_path, monkeypatch, capsys):
+    # 要旨も論調も空の応答が続くのは、プロンプトかレスポンススキーマの破損。
+    # この候補は skipped になって次回に持ち越されないので、黙ると毎朝焼き続ける
+    empty_draft = GenerationResult(
+        draft=ArticleDraft(url_hash="h0", title="t", slug="2026-01-01-t", digest=[], discourse=[]),
+        model="test-model",
+        attempts=1,
+    )
+    settings, args, _ = _compose_env(
+        tmp_path,
+        monkeypatch,
+        candidates=1,
+        llm_outcomes=[empty_draft],
+        notion_outcomes=None,
+    )
+    assert cmd_compose(settings, args) == 1
+    assert "内容不足 1" in capsys.readouterr().err
+
+
+def test_composeは本文が取れないだけなら0を返す(tmp_path, monkeypatch):
+    # 元記事側の事情で、その候補は skipped になる。次回は別の候補が選ばれるので
+    # 人が直すものは無い
+    settings, args, _ = _compose_env(
+        tmp_path,
+        monkeypatch,
+        candidates=2,
+        llm_outcomes=[],
+        notion_outcomes=None,
+        fetch_outcomes=[None, None],
+    )
+    assert cmd_compose(settings, args) == 0
+
+
+def test_composeはdry_runなら常に0を返す(tmp_path, monkeypatch):
+    # Gemini を呼ばないので失敗しようがない。判定に混ぜると
+    # 「キー無しで確認する」用途が壊れる
+    settings, args, _ = _compose_env(
+        tmp_path,
+        monkeypatch,
+        candidates=1,
+        llm_outcomes=[],
+        notion_outcomes=None,
+        notion_configured=True,
+        dry_run=True,
+    )
+    assert cmd_compose(settings, args) == 0
