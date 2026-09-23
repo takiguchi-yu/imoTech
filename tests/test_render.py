@@ -11,12 +11,14 @@ from pathlib import Path
 import pytest
 
 from imotech.config import REPO_ROOT
-from imotech.models import ArticleDraft, DiscoursePoint
+from imotech.models import ArticleDraft, DiscoursePoint, GlossaryEntry
 from imotech.render import (
+    GLOSSARY_HEADING,
     IMO_PLACEHOLDER,
     IMO_PROMPT,
     IMO_SENTINEL,
     article_path,
+    from_markdown,
     has_imo,
     imo_of,
     imo_section_text,
@@ -531,3 +533,114 @@ def test_プレースホルダだけなら空を返す():
 
 def test_節が無ければNoneを返す():
     assert imo_section_text("## 要旨\n\n- a\n") is None
+
+
+# --- 用語 -----------------------------------------------------------------
+#
+# IT 用語が分からない読者のための補足。imo の後ろ（記事の末尾）に置く。
+# imo は Notion から差し込まれるので、その処理が用語の節を壊さないことが要になる。
+
+
+def _glossary() -> list[GlossaryEntry]:
+    return [
+        GlossaryEntry("PE（プライベートエクイティ）", "未公開株に投資するファンド。"),
+        GlossaryEntry("FTC", "米連邦取引委員会。競争政策と消費者保護を担う。"),
+    ]
+
+
+def test_用語はimoの後ろに出る():
+    md = to_markdown(_draft(glossary=_glossary()))
+    assert GLOSSARY_HEADING in md
+    # 記事の締めは運営者の所感で、用語は付録として最後に読む
+    assert md.index("## imo") < md.index(GLOSSARY_HEADING)
+    assert "- **FTC**: 米連邦取引委員会。競争政策と消費者保護を担う。" in md
+
+
+def test_用語が0件なら見出しごと出さない():
+    # 技術的でない記事に空の節を作らない
+    assert GLOSSARY_HEADING not in to_markdown(_draft(glossary=[]))
+
+
+def test_用語があってもimoの判定は変わらない():
+    md = to_markdown(_draft(glossary=_glossary()))
+    # プレースホルダが残っている＝未記入。用語の節を imo の中身と誤認しない
+    assert imo_of(md) is None
+    assert imo_section_text(md) == ""
+    assert has_imo(md) is False
+
+
+def test_imoを差し込んでも用語の節が残る():
+    # set_imo は次の見出しまでを imo 節として扱う。用語を巻き込むと
+    # Notion で承認するたびに用語が消える
+    md = set_imo(to_markdown(_draft(glossary=_glossary())), "所感を書いた。")
+    assert imo_of(md) == "所感を書いた。"
+    assert GLOSSARY_HEADING in md
+    assert "- **FTC**: " in md
+
+
+def test_往復で用語が復元される():
+    md = to_markdown(_draft(glossary=_glossary()))
+    got = from_markdown(md).glossary
+    assert [(g.term, g.description) for g in got] == [(g.term, g.description) for g in _glossary()]
+
+
+def test_説明にコロンが入っても壊れない():
+    # `- **語**: 説明` を最初のコロンで切る。説明側のコロンは残す
+    entry = GlossaryEntry("HTTP", "通信規約。既定のポートは 80: 暗号化する場合は 443。")
+    md = to_markdown(_draft(glossary=[entry]))
+    got = from_markdown(md).glossary
+    assert len(got) == 1
+    assert got[0].term == "HTTP"
+    assert got[0].description == entry.description
+
+
+def test_用語が無い記事を往復しても空のまま():
+    assert from_markdown(to_markdown(_draft(glossary=[]))).glossary == []
+
+
+def test_説明の改行は1行に潰される():
+    # 改行が残ると `- **語**: 説明` の形が割れ、2 行目以降が往復で消える。
+    # さらにその行が `## ` で始まると、以降の用語ごと別セクション扱いになる
+    md = to_markdown(
+        _draft(
+            glossary=[
+                GlossaryEntry("A", "説明\n## 出典\nにせの見出し"),
+                GlossaryEntry("B", "説明B"),
+            ]
+        )
+    )
+    lines = [line for line in md.splitlines() if line.startswith("- **")]
+    assert lines == ["- **A**: 説明 ## 出典 にせの見出し", "- **B**: 説明B"]
+    # 本文中に偽の見出しが立たない＝出典はテンプレート側の 1 つだけ
+    assert "\n## 出典" not in md
+    # 2 件とも往復で残る
+    assert [g.term for g in from_markdown(md).glossary] == ["A", "B"]
+
+
+def test_空の語や説明は行にしない():
+    # `- **語**: ` の行は from_markdown が読み戻せず、往復で件数が合わなくなる
+    md = to_markdown(
+        _draft(
+            glossary=[
+                GlossaryEntry("A", "説明A"),
+                GlossaryEntry("", "語が空"),
+                GlossaryEntry("C", "   "),
+            ]
+        )
+    )
+    assert [line for line in md.splitlines() if line.startswith("- **")] == ["- **A**: 説明A"]
+    assert len(from_markdown(md).glossary) == 1
+
+
+def test_全部が空なら見出しごと出さない():
+    assert GLOSSARY_HEADING not in to_markdown(_draft(glossary=[GlossaryEntry("", "")]))
+
+
+def test_用語にセンチネルが入ってもimoの判定を汚さない():
+    # has_imo は「人がプレースホルダを消したか」を imo 節の中だけで見る。
+    # 全文を走査していたころは、この文字列が用語に紛れると imo を書いても
+    # 「未記入」と報告し続けた（サイトは節だけを見るので公開はされる）
+    entry = GlossaryEntry("X", f"{IMO_SENTINEL}公開されない仕組みの話。")
+    md = set_imo(to_markdown(_draft(glossary=[entry])), "所感を書いた。")
+    assert imo_of(md) == "所感を書いた。"
+    assert has_imo(md) is True

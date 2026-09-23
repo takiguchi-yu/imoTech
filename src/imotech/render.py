@@ -13,7 +13,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
-from .models import ArticleDraft, DiscoursePoint
+from .models import ArticleDraft, DiscoursePoint, GlossaryEntry
 
 JST = timezone(timedelta(hours=9))
 
@@ -89,6 +89,15 @@ def _iso_z(dt: datetime) -> str:
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _one_line(text: str) -> str:
+    """連続する空白（改行を含む）を 1 つの空白に潰す。
+
+    Markdown の 1 行に収める用。改行が残ると `- **語**: 説明` の形が崩れ、
+    2 行目以降は from_markdown が読み戻せず黙って消える。
+    """
+    return _WHITESPACE_RUN_RE.sub(" ", text).strip()
+
+
 def to_markdown(draft: ArticleDraft, *, published_at: datetime | None = None) -> str:
     """下書きを Markdown にする。imo の欄は空のまま残す。
 
@@ -128,6 +137,17 @@ def to_markdown(draft: ArticleDraft, *, published_at: datetime | None = None) ->
     for point in draft.discourse:
         body += [f"### {point.point}", "", point.detail, ""]
     body += ["## imo", "", IMO_PROMPT, ""]
+    # imo の後ろに置く。記事の締めは運営者の所感で、用語は付録として最後に読む。
+    # set_imo は次の見出しまでを imo 節として扱うので、ここに足しても壊れない。
+    # 用語が無い記事では見出しごと出さない（空の節を作らない）
+    # 空の語・説明は行にしない。`- **語**: ` の行は from_markdown が読み戻せず、
+    # 往復で件数が合わなくなる（LLM 経由は llm.py が弾くが、直接作る経路もある）
+    entries = [e for e in draft.glossary if e.term.strip() and e.description.strip()]
+    if entries:
+        body += [GLOSSARY_HEADING, ""]
+        # 改行が入ると 1 行が割れて形が崩れるので、ここでも潰しておく
+        body += [f"- **{_one_line(e.term)}**: {_one_line(e.description)}" for e in entries]
+        body += [""]
 
     return "\n".join(fm + body)
 
@@ -135,10 +155,21 @@ def to_markdown(draft: ArticleDraft, *, published_at: datetime | None = None) ->
 def has_imo(markdown: str) -> bool:
     """imo が書かれているか。
 
-    プレースホルダか固定句のどちらかが残っていれば未記入とみなす。
-    サイト側（site/src/lib/articles.ts）と同じ判定で、`imotech status` が使う。
+    サイト側（site/src/lib/imo.ts の imoOf）と同じ判定で、`imotech status` が使う。
+
+    **探す範囲は imo 節の中だけ。** 以前は Markdown 全文から探していたが、
+    `## 用語` の説明にその文言が紛れると、imo を書いても「未記入」と報告し続けた
+    （サイトは節だけを見るので公開はされる＝監視だけが嘘をつく）。
+
+    `imo_of` とは意味が違う。こちらは「人がプレースホルダを消したか」で、
+    `imo_of` は「公開できる中身があるか」。不可視文字だけを書いた節は
+    has_imo が True・imo_of が None になり、その差で書き直しを促せる。
     """
-    return IMO_PLACEHOLDER not in markdown and IMO_SENTINEL not in markdown
+    found = _imo_section(markdown)
+    if found is None:
+        return False
+    _, _, section = found
+    return IMO_PLACEHOLDER not in section and IMO_SENTINEL not in section
 
 
 def _source_url_of(path: Path) -> str | None:
@@ -184,12 +215,21 @@ def write_article(draft: ArticleDraft, articles_dir: Path) -> tuple[Path, bool]:
 
 
 IMO_HEADING = "## imo"
+# 用語の節。見出しと節名は 1 か所から導く（片方だけ直す事故を防ぐ）
+GLOSSARY_HEADING = "## 用語"
+GLOSSARY_SECTION = GLOSSARY_HEADING.removeprefix("## ")
 
 # imo の見出し。**サイト側（site/src/lib/imo.ts の IMO_HEADING）と同じ規則**にする。
 # 素朴な部分一致にしていたため、`##  imo`（空白 2 個）や `##\timo` を取りこぼし、
 # 逆に `## imo について` では「について」を imo 本文として取り込んでいた。
 # 判定がずれると「Notion では公開済みなのにサイトに出ない」が起きる。
 _IMO_HEADING_RE = re.compile(r"^##[ \t]+imo[ \t]*$", re.MULTILINE)
+# 用語の 1 行。`- **語**: 説明` の形で書き、from_markdown が同じ形で読み戻す。
+# 語の途中に `**` があっても、コロンの直前の `**` までを語として取る
+# （非貪欲だが、後続の `**` + コロンを満たすまでバックトラックするため）。
+# 行頭は strip してから照合する＝入れ子の子項目も同列の用語として拾う
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+_GLOSSARY_LINE_RE = re.compile(r"^-\s+\*\*(?P<term>.+?)\*\*\s*[:：]\s*(?P<desc>.+)$")
 _NEXT_HEADING_RE = re.compile(r"^## ", re.MULTILINE)
 _HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
 
@@ -325,6 +365,7 @@ def from_markdown(text: str) -> ArticleDraft:
 
     digest: list[str] = []
     discourse: list[DiscoursePoint] = []
+    glossary: list[GlossaryEntry] = []
     section = None
     point: str | None = None
     buf: list[str] = []
@@ -342,6 +383,12 @@ def from_markdown(text: str) -> ArticleDraft:
             continue
         if section == "元記事の要旨" and line.startswith("- "):
             digest.append(line[2:].strip())
+        elif section == GLOSSARY_SECTION:
+            m = _GLOSSARY_LINE_RE.match(line.strip())
+            if m is not None:
+                glossary.append(
+                    GlossaryEntry(term=m["term"].strip(), description=m["desc"].strip())
+                )
         elif section == "議論の論調":
             if line.startswith("### "):
                 flush()
@@ -359,6 +406,7 @@ def from_markdown(text: str) -> ArticleDraft:
         digest=digest,
         discourse=discourse,
         tags=tags,
+        glossary=glossary,
         source_url=source_url,
         source_title=_unquote_yaml(fm["sourceTitle"]),
         hn_url=_unquote_yaml(fm["hnUrl"]),

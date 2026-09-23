@@ -247,7 +247,10 @@ URL: {url}
       "stance": "supportive"
     }
   ],
-  "tags": ["rust", "async", "ecosystem"]
+  "tags": ["rust", "async", "ecosystem"],
+  "glossary": [
+    { "term": "非同期ランタイム", "description": "..." }
+  ]
 }
 ```
 
@@ -258,6 +261,7 @@ URL: {url}
 | `digest` | 3〜5 要素、各 60〜120 文字 |
 | `discourse` | 2〜4 要素。`stance` は `supportive` \| `critical` \| `mixed` |
 | `tags` | 2〜5 要素、英小文字 |
+| `glossary` | **0〜5 要素**。`term` は記事に出てくる語（**分野は問わない**）、`description` は 30〜80 文字。`required` に入れず `minItems` も置かない — 用語が要らない記事で数を埋めさせないため |
 
 ### 2.5 公開物の Markdown（`site/src/content/articles/<slug>.md`）
 
@@ -290,7 +294,15 @@ generatedAt: 2026-09-22T06:12:31Z
 
 （人間が書いた 1 行以上。空のあいだはプレースホルダが入り、公開されない）
 
+## 用語
+
+- **非同期ランタイム**: 非同期処理のスケジューリングを担う実行基盤。…
 ```
+
+**用語は `imo` の後ろ**に置く。記事の締めは運営者の所感で、用語は付録として最後に読む。
+`set_imo`（Notion の承認を差し込む処理）は「次の見出しまで」を imo 節として扱うので、
+後ろに節を足しても壊れない。**用語が 0 件の記事では見出しごと出さない**（空の節を作らない）。
+書式は `- **語**: 説明` に固定していて、`from_markdown` が同じ形で読み戻す。
 
 出典と AI 利用の開示は**本文に入れない**。サイトのテンプレート（`site/src/pages/articles/[...slug].astro`）がフロントマターから描く。本文にも持たせると片方だけ古くなる。
 

@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from imotech.models import ArticleDraft, DiscoursePoint
+from imotech.models import ArticleDraft, DiscoursePoint, GlossaryEntry
 from imotech.notion import (
     DATABASE_SCHEMA,
     MAX_CHILDREN_PER_REQUEST,
@@ -731,3 +731,61 @@ def test_PATCHのボディは改名と追加だけを含む():
     # 型が違うものは PATCH に含めない（Notion が受け付けない）
     payload2 = patch_properties_payload(_existing(Status={"type": "status"}))
     assert "Status" not in payload2["properties"]
+
+
+# --- 用語 -----------------------------------------------------------------
+
+
+def _types(blocks: list[dict]) -> list[str]:
+    return [b["type"] for b in blocks]
+
+
+def _texts(blocks: list[dict]) -> list[str]:
+    out = []
+    for b in blocks:
+        rt = b.get(b["type"], {}).get("rich_text") or []
+        out.append("".join(t.get("text", {}).get("content", "") for t in rt))
+    return out
+
+
+def test_用語がレビュー面にも出る():
+    # 要旨と論調を出しているのに用語だけ出ないと、人が用語の妥当性を確認できない
+    blocks = build_blocks(
+        _draft(
+            glossary=[
+                GlossaryEntry("PE", "未公開株に投資するファンド。"),
+                GlossaryEntry("FTC", "米連邦取引委員会。"),
+            ]
+        )
+    )
+    texts = _texts(blocks)
+    assert "用語" in texts
+    assert "PE: 未公開株に投資するファンド。" in texts
+    assert "FTC: 米連邦取引委員会。" in texts
+    # 出典の前に置く（Markdown で imo の後ろに置くのと同じ位置づけ）
+    assert texts.index("用語") < texts.index("出典")
+
+
+def test_用語が0件なら見出しを出さない():
+    assert "用語" not in _texts(build_blocks(_draft(glossary=[])))
+
+
+def test_長い用語の説明は切り捨てずに分割される():
+    # Notion の rich_text は 1 要素 2000 文字まで。**切り捨てではなく分割**である
+    # ことを見る（_rich_text は必ず 2000 で切るので、長さの上限だけを見る
+    # アサーションは実装が切り捨てに変わっても通ってしまう）
+    long = "あ" * 5000
+    blocks = build_blocks(_draft(glossary=[GlossaryEntry("X", long)]))
+    # 用語の節だけを見る（要旨と出典の箇条書きが混ざらないように）
+    start = _texts(blocks).index("用語") + 1
+    joined = ""
+    for b in blocks[start:]:
+        if b["type"] != "bulleted_list_item":
+            break
+        joined += "".join(t["text"]["content"] for t in b["bulleted_list_item"]["rich_text"])
+    assert joined == f"X: {long}"
+    assert all(
+        len(t.get("text", {}).get("content", "")) <= 2000
+        for b in blocks
+        for t in (b.get(b["type"], {}).get("rich_text") or [])
+    )

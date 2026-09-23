@@ -80,6 +80,9 @@ const site = "imoTech";
       .tags a { font-size: 0.75rem; text-decoration: none; border: 1px solid var(--line); border-radius: 999px; padding: 0.125rem 0.625rem; }
       .entries { list-style: none; padding: 0; }
       .entries li { padding: 1.25rem 0; border-bottom: 1px solid var(--line); }
+      /* 記事本文の箇条書き。用語が 5 件並ぶと、余白が無いと塊になって読めない */
+      article li { margin-bottom: 0.4rem; }
+      article .entries li { margin-bottom: 0; }
       .entries h2 { border: 0; margin: 0 0 0.25rem; font-size: 1.0625rem; }
       .entries h2 a { text-decoration: none; }
       .disclosure { margin-top: 3rem; padding: 0.875rem 1rem; border-left: 3px solid var(--line); color: var(--muted); font-size: 0.8125rem; }

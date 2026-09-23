@@ -136,6 +136,19 @@ class DiscoursePoint:
 
 
 @dataclass(frozen=True)
+class GlossaryEntry:
+    """記事を読むのに、意味を知らないと困る語。
+
+    「一般に難しい語」ではなく「**この記事**を読むのに要る語」を選ぶ。
+    **分野は問わない** — 技術用語に限らず、金融・法務・心理などの語も入る。
+    記事ごとに必要な語は違うので、辞書を持たず記事と一緒に生成する。
+    """
+
+    term: str
+    description: str
+
+
+@dataclass(frozen=True)
 class ArticleDraft:
     """LLM が生成し、Notion に下書きとして投入する記事。imo はまだ無い。"""
 
@@ -145,6 +158,8 @@ class ArticleDraft:
     digest: list[str]
     discourse: list[DiscoursePoint]
     tags: list[str] = field(default_factory=list)
+    # 0 件を許す。そういう語が無い記事で数を埋めさせない
+    glossary: list[GlossaryEntry] = field(default_factory=list)
     source_url: str = ""
     source_title: str = ""
     hn_url: str = ""

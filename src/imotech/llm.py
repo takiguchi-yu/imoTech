@@ -14,7 +14,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
-from .models import AnonymizedReaction, ArticleDraft, ArticleSource, DiscoursePoint, Story
+from .models import (
+    AnonymizedReaction,
+    ArticleDraft,
+    ArticleSource,
+    DiscoursePoint,
+    GlossaryEntry,
+    Story,
+)
+from .render import IMO_PLACEHOLDER, IMO_SENTINEL
 
 PROMPT_PATH = Path(__file__).with_name("prompts") / "compose.md"
 
@@ -45,6 +53,21 @@ RESPONSE_SCHEMA = {
             "maxItems": 4,
         },
         "tags": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 5},
+        # 読者が知らない語でつまずかないための補足。分野は問わない。
+        # **minItems を置かない**のは、そういう語が無い記事で数を埋めさせないため
+        # （required にも入れない）
+        "glossary": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "term": {"type": "string"},
+                    "description": {"type": "string"},
+                },
+                "required": ["term", "description"],
+            },
+            "maxItems": 5,
+        },
     },
     "required": ["title", "slug_hint", "digest", "discourse", "tags"],
 }
@@ -241,6 +264,38 @@ def _parse(resp: object) -> dict:
     return json.loads(text)
 
 
+# 改行が入ると Markdown の 1 行が割れ、`- **語**: 説明` の形が崩れる。
+# 2 行目以降は from_markdown が読み戻せず黙って消え、`## ` で始まる行なら
+# 以降の用語ごと別セクション扱いになる（render.py の _GLOSSARY_LINE_RE を参照）
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+
+
+def _to_glossary(raw: object) -> list[GlossaryEntry]:
+    """LLM が返した glossary を GlossaryEntry のリストにする。
+
+    **ここは LLM の出力をそのまま受ける唯一の経路なので、型を信用しない。**
+    `glossary` は RESPONSE_SCHEMA の required に入れていない（用語が要らない記事で
+    数を埋めさせないため）ので、モデルが型を外しても弾かれずに届く。
+    配列でなければ空、要素が dict でなければ捨てる。
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[GlossaryEntry] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        term = _WHITESPACE_RUN_RE.sub(" ", str(item.get("term", ""))).strip()
+        desc = _WHITESPACE_RUN_RE.sub(" ", str(item.get("description", ""))).strip()
+        if not term or not desc:
+            continue
+        # imo の判定に使う文言が紛れると、記事が「imo 未記入」に見え続ける
+        # （render.py の has_imo は Markdown 全文を走査する）
+        if IMO_PLACEHOLDER in term + desc or IMO_SENTINEL in term + desc:
+            continue
+        out.append(GlossaryEntry(term=term, description=desc))
+    return out
+
+
 def _to_draft(
     payload: dict, *, story: Story, url_hash: str, hatena_url: str, model: str
 ) -> ArticleDraft:
@@ -249,6 +304,7 @@ def _to_draft(
         DiscoursePoint(point=d["point"], detail=d["detail"], stance=d["stance"])
         for d in payload["discourse"]
     ]
+    glossary = _to_glossary(payload.get("glossary"))
     return ArticleDraft(
         url_hash=url_hash,
         title=payload["title"],
@@ -256,6 +312,7 @@ def _to_draft(
         digest=list(payload["digest"]),
         discourse=discourse,
         tags=normalize_tags(list(payload.get("tags") or [])),
+        glossary=glossary,
         source_url=story.url,
         source_title=story.title,
         hn_url=story.hn_url,

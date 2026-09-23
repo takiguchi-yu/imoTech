@@ -141,6 +141,10 @@ def build_blocks(draft: ArticleDraft) -> list[dict]:
     for point in draft.discourse:
         blocks.append(_heading(3, point.point))
         blocks += [_paragraph(chunk) for chunk in _split_long(point.detail)]
+    if draft.glossary:
+        blocks.append(_heading(2, "用語"))
+        for entry in draft.glossary:
+            blocks += _bullets(f"{entry.term}: {entry.description}")
     blocks += [
         {"type": "divider", "divider": {}},
         _heading(2, "出典"),

@@ -5,8 +5,16 @@ from datetime import UTC, datetime
 import pytest
 from google.genai import errors
 
-from imotech.llm import DraftGenerator, LLMError, build_user_prompt, slugify
+from imotech.llm import (
+    RESPONSE_SCHEMA,
+    DraftGenerator,
+    LLMError,
+    _to_glossary,
+    build_user_prompt,
+    slugify,
+)
 from imotech.models import AnonymizedReaction, ArticleSource, Story
+from imotech.render import IMO_PLACEHOLDER, IMO_SENTINEL
 
 STORY = Story(
     hn_item_id=42,
@@ -182,3 +190,79 @@ def test_ウェイト0なら待たない():
     _run(g)
     _run(g)
     assert waited == []
+
+
+# --- 用語 -----------------------------------------------------------------
+#
+# glossary は RESPONSE_SCHEMA の required に入れていない（技術的でない記事で
+# 無理やり用語を作らせないため）。返らないことを前提にした受け方をする。
+
+
+def test_glossaryが返らなくても落ちない():
+    # VALID_JSON は glossary を持たない＝実際に返らないケース
+    assert _run(_gen()).draft.glossary == []
+
+
+def test_glossaryが返れば復元される():
+    payload = VALID_JSON[:-1] + (
+        ',"glossary":[{"term":"PE","description":"未公開株に投資するファンド。"},'
+        '{"term":"FTC","description":"米連邦取引委員会。"}]}'
+    )
+    got = _run(_gen({"m1": payload})).draft.glossary
+    assert [(g.term, g.description) for g in got] == [
+        ("PE", "未公開株に投資するファンド。"),
+        ("FTC", "米連邦取引委員会。"),
+    ]
+
+
+def test_空の用語は捨てる():
+    # 語だけ・説明だけの要素をそのまま記事に出すと「**語**: 」の行が残る
+    payload = VALID_JSON[:-1] + (
+        ',"glossary":[{"term":"","description":"説明だけ"},'
+        '{"term":"語だけ","description":"   "},'
+        '{"term":" PE ","description":" 前後に空白 "}]}'
+    )
+    got = _run(_gen({"m1": payload})).draft.glossary
+    assert [(g.term, g.description) for g in got] == [("PE", "前後に空白")]
+
+
+def test_スキーマがglossaryを0件から5件で定義している():
+    g = RESPONSE_SCHEMA["properties"]["glossary"]
+    assert g["maxItems"] == 5
+    # minItems を置くと、用語の無い記事でも無理に埋めさせることになる
+    assert "minItems" not in g
+    assert "glossary" not in RESPONSE_SCHEMA["required"]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "なし",  # 文字列
+        {"term": "x", "description": "y"},  # 配列でなく単体
+        ["PE", "FTC"],  # 要素が文字列
+        [None],
+        5,
+        None,
+    ],
+)
+def test_glossaryが配列以外で返っても落ちない(raw):
+    # glossary は required に入れていない＝モデルが型を外しうる唯一のフィールド。
+    # 例外が上がると、リトライ節（ValueError/KeyError/JSONDecodeError）を
+    # すり抜けてバッチの残り候補ごと落ちる
+    assert _to_glossary(raw) == []
+
+
+def test_glossaryの改行は空白に潰される():
+    # Markdown の 1 行に収める。改行が残ると `- **語**: 説明` の形が割れる
+    got = _to_glossary([{"term": "X", "description": "1 行目\n2 行目"}])
+    assert [(g.term, g.description) for g in got] == [("X", "1 行目 2 行目")]
+
+
+def test_imoの判定に使う文言を含む用語は捨てる():
+    # 記事が「imo 未記入」に見え続けるのを防ぐ。set_imo が同じ文言を弾くのと対称
+    raw = [
+        {"term": "A", "description": f"{IMO_SENTINEL}という話。"},
+        {"term": "B", "description": f"{IMO_PLACEHOLDER} を含む話。"},
+        {"term": "C", "description": "普通の説明。"},
+    ]
+    assert [g.term for g in _to_glossary(raw)] == ["C"]
