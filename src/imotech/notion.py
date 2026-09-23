@@ -47,11 +47,12 @@ PROP_STATUS = "Status"
 PROP_IMO = "imo"
 PROP_URL_HASH = "URL Hash"
 PROP_SLUG = "Slug"
+PROP_SOURCE = "Source"
 PROP_SOURCE_URL = "Source URL"
-PROP_HN_URL = "HN URL"
+PROP_DISCUSSION_URL = "Discussion URL"
 PROP_HATENA_URL = "Hatena URL"
-PROP_HN_SCORE = "HN Score"
-PROP_HN_COMMENTS = "HN Comments"
+PROP_SCORE = "Score"
+PROP_COMMENTS = "Comments"
 PROP_TAGS = "Tags"
 PROP_COLLECTED_AT = "Collected At"
 PROP_PUBLISHED_AT = "Published At"
@@ -183,22 +184,32 @@ def build_blocks(draft: ArticleDraft) -> list[dict]:
 def build_properties(draft: ArticleDraft, *, collected_at: datetime | None = None) -> dict:
     """ページのプロパティ。imo は**入れない**（人が書く欄なので空で作る）。"""
     generated = draft.generated_at or datetime.now(UTC)
-    return {
+    props = {
         PROP_TITLE: {"title": _rich_text(draft.title)},
         PROP_STATUS: {"select": {"name": STATUS_DRAFT}},
         PROP_URL_HASH: {"rich_text": _rich_text(draft.url_hash)},
         PROP_SLUG: {"rich_text": _rich_text(draft.slug)},
+        # **ソースごとに列を増やさない。** 列は意味ごとに 1 つで、
+        # どのソースの行かは Source で分かる。Select に無い名前を送ると Notion が
         PROP_SOURCE_URL: {"url": draft.source_url},
-        PROP_HN_URL: {"url": draft.discussion_url},
+        PROP_DISCUSSION_URL: {"url": draft.discussion_url},
         PROP_HATENA_URL: {"url": draft.hatena_url},
-        PROP_HN_SCORE: {"number": draft.engagement.score},
-        PROP_HN_COMMENTS: {"number": draft.engagement.comments},
+        PROP_SCORE: {"number": draft.engagement.score},
+        PROP_COMMENTS: {"number": draft.engagement.comments},
         PROP_TAGS: {"multi_select": [{"name": t} for t in draft.tags]},
         PROP_COLLECTED_AT: {
             "date": {"start": (collected_at or generated).isoformat(timespec="seconds")}
         },
         PROP_MODEL: {"rich_text": _rich_text(draft.model)},
     }
+    # **ソースごとに列を増やさない。** 列は意味ごとに 1 つで、どのソースの行かは Source で分かる。
+    # Select に無い名前を送ると Notion が選択肢を足すので、ソースを足しても DB 側の作業は要らない
+    # （https://developers.notion.com/reference/page-property-values の select）。
+    # ソースが分からない行は**キーごと送らない**（空欄になる）。空の名前は受け付けられず、
+    # `{"select": null}` を作成時に送ってよいかは公式ドキュメントに書かれていない
+    if draft.source:
+        props[PROP_SOURCE] = {"select": {"name": draft.source}}
+    return props
 
 
 @dataclass
@@ -519,15 +530,29 @@ DATABASE_SCHEMA: dict = {
     PROP_IMO: {"rich_text": {}},
     PROP_URL_HASH: {"rich_text": {}},
     PROP_SLUG: {"rich_text": {}},
+    # 選択肢は書かない。ページを作るときに Notion が足す（build_properties のコメント参照）
+    PROP_SOURCE: {"select": {}},
     PROP_SOURCE_URL: {"url": {}},
-    PROP_HN_URL: {"url": {}},
+    PROP_DISCUSSION_URL: {"url": {}},
     PROP_HATENA_URL: {"url": {}},
-    PROP_HN_SCORE: {"number": {}},
-    PROP_HN_COMMENTS: {"number": {}},
+    PROP_SCORE: {"number": {}},
+    PROP_COMMENTS: {"number": {}},
     PROP_TAGS: {"multi_select": {}},
     PROP_COLLECTED_AT: {"date": {}},
     PROP_PUBLISHED_AT: {"date": {}},
     PROP_MODEL: {"rich_text": {}},
+}
+
+
+#: 旧名 → 新名。既存の DB にこの旧名の列があれば、**新しい列を足さずに改名する**。
+#: 足すと値の入っていない同じ意味の列が並び、既存ページの値は旧名の列に取り残される。
+#: 改名なら既存ページの値はそのまま残る（M8 で本番の 12 ページを前後で突き合わせて確認した）。
+#: 改名前からあるページの Source は空欄のまま残る（本番の 12 ページは M8 で一度きり埋めた）
+RENAMED_PROPS: dict[str, str] = {
+    # M8: Hacker News しか無かったころの名前。値は M7 からソース非依存
+    "HN URL": PROP_DISCUSSION_URL,
+    "HN Score": PROP_SCORE,
+    "HN Comments": PROP_COMMENTS,
 }
 
 
@@ -552,7 +577,7 @@ def _expected_type(spec: dict) -> str:
 def schema_diff(existing: dict) -> tuple[dict, dict, dict]:
     """既存のプロパティと設計書のスキーマを比べる。
 
-    返り値は (追加が必要なもの, タイトルの改名指示, 型が違うもの)。
+    返り値は (追加が必要なもの, 改名指示, 型が違うもの)。
 
     **型まで見る。** 名前だけを比べると、Notion の UI で作った DB の `Status` が
     Status 型（UI の既定）でも「揃っています」と判断してしまい、そのあと
@@ -563,8 +588,18 @@ def schema_diff(existing: dict) -> tuple[dict, dict, dict]:
     Notion のデータベースはタイトル型のプロパティを 1 つだけ持てる。既存 DB の
     タイトル列が別名（Notion が作る既定は「名前」）なら、Title を足すのではなく
     改名する必要がある。
+
+    `RENAMED_PROPS` の旧名の列が同じ型で残っていれば、それも追加ではなく改名にする。
+    型が違う旧名の列は改名しない（改名しても値を書けないので、新しい列を足す）。
     """
     missing = {k: v for k, v in DATABASE_SCHEMA.items() if k not in existing}
+
+    rename: dict = {}
+    for old, new in RENAMED_PROPS.items():
+        same_type = existing.get(old, {}).get("type") == _expected_type(DATABASE_SCHEMA[new])
+        if new in missing and same_type:
+            missing.pop(new)
+            rename[old] = {"name": new}
 
     mismatched: dict = {}
     for name, spec in DATABASE_SCHEMA.items():
@@ -576,7 +611,6 @@ def schema_diff(existing: dict) -> tuple[dict, dict, dict]:
         if got != want:
             mismatched[name] = {"expected": want, "actual": got}
 
-    rename: dict = {}
     if PROP_TITLE in missing:
         current_title = next(
             (name for name, spec in existing.items() if spec.get("type") == "title"), None
@@ -584,8 +618,28 @@ def schema_diff(existing: dict) -> tuple[dict, dict, dict]:
         if current_title:
             # タイトル型は 1 つだけなので、追加ではなく改名する
             missing.pop(PROP_TITLE)
-            rename = {current_title: {"name": PROP_TITLE}}
+            rename[current_title] = {"name": PROP_TITLE}
     return missing, rename, mismatched
+
+
+def unrenamed_old_props(existing: dict) -> dict[str, str]:
+    """旧名の列があるのに改名しないもの（旧名 → 理由）。
+
+    改名しない旧名の列は**黙って残る**。値は旧名の列に取り残され、新しい列は空になる。
+    notion-setup が知らせて、人が UI で消すか値を移すかを決める。
+    """
+    _, rename, _ = schema_diff(existing)
+    out: dict[str, str] = {}
+    for old, new in RENAMED_PROPS.items():
+        if old not in existing or old in rename:
+            continue
+        want = _expected_type(DATABASE_SCHEMA[new])
+        got = existing[old].get("type")
+        if new in existing:
+            out[old] = f"{new!r} が既にある"
+        elif got != want:
+            out[old] = f"型が {got} で、{new!r} の {want} と違う"
+    return out
 
 
 def patch_properties_payload(existing: dict) -> dict:

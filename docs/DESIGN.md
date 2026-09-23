@@ -162,6 +162,9 @@ Python の標準的な書き方へ翻訳している**。
 3. **表示名と注目度の単位が要るなら** `site/src/lib/sources.ts` の `SOURCES` にも 1 行足す
    （無くても壊れないが、生のソース名と "points" が出る）
 
+**Notion は触らない。** 列は意味ごとに 1 つで、`Source` の選択肢は最初のページを作ったときに
+Notion が足す（3.1）。
+
 `cli.py` も `store.py` も `render.py` も変えずに済むことは、`tests/test_sources.py` で
 ダミーのソースを登録して実証している。
 
@@ -562,15 +565,39 @@ Notion の内容を消しても、公開済みの記事は影響を受けない�
 | `imo` | Rich text | — | **人間のみ** | 所感。空のまま Approved にされたら公開を拒否する |
 | `URL Hash` | Rich text | — | パイプライン | 冪等性キー。投入前の存在チェックに使う |
 | `Slug` | Rich text | — | パイプライン | `YYYY-MM-DD-<slug_hint>` |
+| `Source` | Select | 選択肢は書かない（下記） | パイプライン | 話題を拾ったソース（`hackernews` / `qiita` …）。`sources/registry.py` の名前 |
 | `Source URL` | URL | — | パイプライン | 元記事 |
-| `HN URL` | URL | — | パイプライン | HN スレッド |
+| `Discussion URL` | URL | — | パイプライン | 話題を拾ったソースでの議論（HN のスレッド、Qiita の記事） |
 | `Hatena URL` | URL | — | パイプライン | はてブのコメントページ（リンクのみ） |
-| `HN Score` | Number | 整数 | パイプライン | 熟成判定時のスコア |
-| `HN Comments` | Number | 整数 | パイプライン | 熟成判定時のコメント数 |
+| `Score` | Number | 整数 | パイプライン | 熟成判定時の注目度（HN は points、Qiita は LGTM。単位は `Source` で読む） |
+| `Comments` | Number | 整数 | パイプライン | 熟成判定時のコメント数 |
 | `Tags` | Multi-select | — | パイプライン | タグ |
 | `Collected At` | Date | 時刻を含む | パイプライン | 候補として拾った時刻 |
 | `Published At` | Date | 時刻を含む | パイプライン | commit した時刻 |
 | `Model` | Rich text | — | パイプライン | 実際に使われたモデル ID（フォールバックの記録） |
+
+**列はソースごとに作らない（M8）。** 意味が同じ値（議論の URL・注目度・コメント数）はソースが違っても
+同じ列に入れ、どのソースの行かは `Source` で分かるようにする。ソースを足すたびに列を足すと、
+列が横に増え続け、ビューのフィルタや並べ替えもソースの数だけ要る。ソースに固有の指標
+（Qiita のストック数など）は列にしない。要るならページ本文に書く。
+
+**`Source` の選択肢はスキーマに書かない。** Select に無い名前でページを作ると、Notion がその名前を
+選択肢に足す（「If the select data source property doesn't have an option by that name yet, then the name is
+added to the data source schema」— [page-property-values](https://developers.notion.com/reference/page-property-values)）。
+なので**ソースを足しても Notion 側の作業は要らない。**
+
+**列の改名は `notion-setup` が行う。** `notion.py` の `RENAMED_PROPS`（旧名 → 新名）にある旧名の列が
+同じ型で残っていれば、新しい列を足さずに改名する（`PATCH /v1/data_sources/{id}` でプロパティの `name` を変える —
+[update-a-data-source](https://developers.notion.com/reference/update-a-data-source)）。足すと値の無い同じ意味の列が並び、
+既存ページの値は旧名の列に取り残される。M8 で `HN URL` / `HN Score` / `HN Comments` をこれで改名し、
+本番の 12 ページの値が前後で一致することを確かめた。旧名の列があるのに改名しないもの（型が違う、
+新名の列が既にある）は、`notion-setup` が名指しで知らせる（黙って残すと値が旧名の列に取り残される）。
+
+**改名前からあるページの `Source` は空欄になる。** Source は新しく作るページにしか書かない。
+本番の 12 ページは M8 で一度きり埋めた（議論の URL のホストから判定）。
+
+**戻すとき:** コードを戻す前に、Notion の UI で列名を旧名に戻す。先にコードだけ戻すと、旧コードの
+`notion-setup` は旧名の列が無いと判断して空の列を足し、値が 2 つの列に分かれる。
 
 **`Status` を Notion の Status 型ではなく Select 型にする理由**: Status 型のオプションは API から作成できず、Notion の UI で手作業になる。Select 型なら DB 作成スクリプトで完結し、環境の再現性が取れる。グループ機能（To-do / In progress / Complete）は今回の 4 状態には不要。
 
@@ -630,7 +657,7 @@ heading_2 議論の論調
 divider
 heading_2 出典
 bulleted_list_item 元記事: <Source URL>
-bulleted_list_item Hacker News: <HN URL>
+bulleted_list_item 議論: <Discussion URL>
 bulleted_list_item はてなブックマーク: <Hatena URL>
 paragraph 生成モデル: <model> / 生成日時: <generatedAt>
 ```

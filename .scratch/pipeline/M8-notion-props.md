@@ -1,60 +1,63 @@
-# M8: Notion のプロパティ名をソース非依存にする
+# M8: Notion のプロパティ名をソース非依存にし、Source 列を足す
 
-Notion DB の表示名が `HN URL` / `HN Score` / `HN Comments` のまま残っている。
-入る値はすでにソース非依存（`draft.discussion_url` / `draft.engagement.score` /
-`draft.engagement.comments`）なので、**Hacker News 以外のソースを足した瞬間にラベルが嘘になる**。
+**Status:** 完了（本番 DB に反映済み・2026-09-23）
+**Blocked by:** なし
 
-**Status:** 未着手
-**Blocked by:** なし（M7 完了済み。ただし着手条件は下記を参照）
+Notion DB の表示名が `HN URL` / `HN Score` / `HN Comments` のまま残っていた。入る値は M7 から
+ソース非依存（`draft.discussion_url` / `draft.engagement.*`）なので、Qiita の記事が入った瞬間にラベルが嘘になる。
+また、どのソースの行かを Notion 上で見分ける列が無かった。
 
-## なぜこのチケットに切ったか
+## 決めたこと（ユーザーの判断）
 
-M7（データソースを増やせる形に再設計する）で値の側は直したが、**表示名は据え置いた**。
-既存 DB に 14 ページあり、リネームは実データの移行を伴う。M7 の差分（コードの再設計）と
-混ぜると、失敗したときにどちらが原因か切り分けられない。
+- **ソースごとに列を増やさない**（「データソースが増えたときにカラムも増やす必要があるのは煩雑」）。
+  列は意味ごとに 1 つにし、どのソースの行かは `Source`（Select）で分かるようにする。ソース固有の指標は列にしない
+- 列名: `HN URL` → `Discussion URL`、`HN Score` → `Score`、`HN Comments` → `Comments`。`Hatena URL` は据え置き
+  （はてブは話題の発見元ではなく記事に出すリンクなので、ソースが増えてもラベルは正しい）
+- **テスト DB を挟まず本番を直接改修する**（「本番と言ってもまだプロトタイプだから自由に改修してOK」）。
+  代わりに改修の前後で本番のスナップショットを取り、ページ id ごとに値を突き合わせる
 
-M7 時点の実測: `uv run imotech notion-setup --dry-run` → 差分 0（コードと既存 DB は整合している）。
+## 設計
 
-## 見つけたときの状況
-
-`src/imotech/notion.py:46,48,49`
-
-```python
-PROP_HN_URL = "HN URL"
-PROP_HN_SCORE = "HN Score"
-PROP_HN_COMMENTS = "HN Comments"
-```
-
-定数名・表示名とも `HN` 固定。入る値は M7 でソース非依存になっている（`notion.py:171,173`）。
-`docs/DESIGN.md` 3.1 のプロパティ表も同じ名前で書かれているので、そちらも一緒に直す必要がある。
+- **概念**: `RENAMED_PROPS`（旧名 → 新名の改名表）、`Source` 列（Select、選択肢はスキーマに書かない）
+- **責務**: `schema_diff` が列ごとに「足す／改名する」を決める。`unrenamed_old_props` が改名しない旧名を挙げ、
+  `notion-setup` が知らせる。`build_properties` が値を入れる
+- **依存の向き**: `cli` → `notion`（一方向）
+- **採らなかったもの**: Strategy などのパターン。呼び出し元が 1 つで差し替える先が無いので、辞書 1 つで足りる
+- **Source の選択肢を書かない理由**: Select に無い名前でページを作ると Notion が選択肢を足す
+  （https://developers.notion.com/reference/page-property-values の select）。ソースを足しても Notion の作業は要らない。
+  本番でも、既存ページへの `hackernews` の書き込みで選択肢が足されることを確かめた
+- **ソースが空のとき**: `Source` のキーごと送らない。`{"select": null}` を作成時に送ってよいかは公式ドキュメントに書かれていない
 
 ## 完了条件
 
-- [ ] 表示名を決めた（案: `Discussion URL` / `Score` / `Comments`。**どのソースでも意味が通る名前**にする）
-- [ ] 定数名も合わせた（`PROP_HN_URL` → `PROP_DISCUSSION_URL` など）
-- [ ] `docs/DESIGN.md` 3.1 のプロパティ表を新しい名前に更新した
-- [ ] **既存ページが壊れないことを確認した** — Notion 側でプロパティをリネームすると
-      既存ページの値は保持される（リネームは列の名前替えであって作り直しではない）ことを、
-      **本番 DB とは別のテスト DB で実際に確かめた**
-- [ ] `uv run imotech notion-setup --dry-run` が差分 0 を返す（リネーム後のコードと DB が整合）
-- [ ] 既存 14 ページの `HN URL` / `HN Score` / `HN Comments` の値が、リネーム後も読める
-      （`uv run imotech publish --dry-run` が 14 ページを従来どおり処理できる）
-- [ ] `uv run pytest -q` が通る（`tests/test_notion.py` の定数参照も追随させる）
-- [ ] ソースを増やすときに**この作業を繰り返さずに済む**ことを、DESIGN.md の
-      「ソースを足す手順」に 1 行足して示した
+- [x] コードに HN 固定の列名が残らない（`git grep 'HN URL\|HN Score\|HN Comments\|PROP_HN' -- src` は `RENAMED_PROPS` の旧名だけ）
+- [x] `notion-setup` が旧名の列を足し直さず改名する。型が違う旧名は改名しない（`tests/test_notion.py`）
+- [x] 改名しない旧名の列（型が違う・新名が既にある）を `notion-setup` が名指しで知らせる
+- [x] 新しいページに Source が入る。知らないソース名もそのまま送る。空なら送らない（テスト）
+- [x] 本番: 改名の前後で 12 ページ × 12 列の値が一致（ページ id で突き合わせ、Status / Published At / Source は比較から外した）
+- [x] 本番: Source が 12 ページすべて `hackernews`（議論の URL のホストから判定。判定できないページは 0 件）
+- [x] 本番: 改名後の `notion-setup --dry-run` が「追加 0 件・何もしません」
+- [x] `uv run ruff check .` / `uv run pytest -q`（487 件）
+- [x] `docs/DESIGN.md` 3.1（列の表・列をソースごとに作らない方針・改名・Source が空のページ・戻し方）、3.3、「ソースを足すときに触る範囲」
+- [x] `README.md`（以前の版の DB の改名、コードを更新したら `notion-setup` を 1 回）
 
-## 着手できる条件
+## 本番での作業の記録（2026-09-23 20:0x JST）
 
-- **どのソースを 2 つ目に足すかが決まっていること。** Qiita なら「LGTM」、Zenn なら「いいね」で
-  スコアの呼び名が違う。`Score` という総称に倒すか、ソース名を併記するかは、
-  実際に何を足すかで変わる（M7 の申し送り参照）
-- リネーム作業は Notion のダッシュボード操作を伴う可能性がある。**API でリネームできるか**を
-  先に一次情報で確認する（`PATCH /v1/data_sources/{id}` でプロパティの `name` を変えられるか）
+| 手順 | 結果 |
+|---|---|
+| 改名前のスナップショット | 列 14、ページ 12（Draft 10 / Approved 1 / Published 1）、議論の URL はすべて news.ycombinator.com |
+| `notion-setup` | 改名 3 件 + Source の追加を 1 回の PATCH で。「設計書の 15 件すべてが揃いました」 |
+| 改名直後の比較 | 12 ページ × 12 列、不一致 0 |
+| Source の埋め込み | 12 件（scratchpad の一度きりのスクリプト。コードには入れない） |
+| 埋め込み後の比較 | 不一致 0。Source は `hackernews` 12 |
+| 2 回目の `notion-setup --dry-run` | 追加 0 件 |
+
+改名と push のあいだに `daily.yml`（06:17 JST）は走っていない（作業は 20 時台）。`publish.yml` は
+Status / imo / URL Hash / Slug しか読まないので、改名の影響を受けない。
 
 ## 申し送り
 
-- **`Hatena URL` は据え置いてよい。** はてなブックマークは話題の発見元ではなく、
-  記事に出すリンクなので、ソースが増えてもラベルは正しいままである
-- リネームとコード変更は**同時に反映しないと壊れる**。コードだけ先に出すと、
-  古い表示名の DB に対して `notion-setup` が「足りないプロパティがある」と判断して列を増やしてしまう。
-  **DB のリネーム → コードの反映** の順にするか、1 回のデプロイで揃える
+- **戻すとき**は、コードを戻す前に Notion の UI で列名を旧名に戻す（逆だと旧コードの `notion-setup` が空の列を足す）
+- **列の名前が変わる版に更新したら `notion-setup` を 1 回**（README の「コードを更新したら」）。
+  食い違ったまま `compose` すると投入に失敗し、候補は処理済みになるので `notion-sync` で入れ直す
+- テストの「ソース固有の名前の列を作らない」は "HN" / "Qiita" の部分一致しか見ていない。3 つ目のソース名が入った列は検出しない

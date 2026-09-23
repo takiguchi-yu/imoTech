@@ -129,6 +129,23 @@ uv run imotech notion-setup             # 適用
 > ⚠️ **既存のタイトル列は `Title` に改名される。** Notion のデータベースはタイトル型の
 > プロパティを 1 つしか持てないため、既定の「名前」などを `Title` に改名する。
 > 列の値は保持されるが、名前が変わることは知っておくこと。既存のプロパティを削除することはない。
+>
+> **以前の版で作った DB だけ:** 古い名前の列（`HN URL` / `HN Score` / `HN Comments`）は
+> `Discussion URL` / `Score` / `Comments` に改名され、`Source` 列が足される（改名表は
+> `src/imotech/notion.py` の `RENAMED_PROPS`）。どのソースの行かは `Source` で分かり、ソースを足しても
+> Notion の列は増えない。**改名前からあるページの `Source` は空欄のまま**なので、Source で絞り込むと漏れる。
+
+#### コードを更新したら
+
+**列の名前や数が変わる版に更新したら、`compose` や `notion-sync` の前に `notion-setup` を 1 回実行する。**
+コードと DB の列名が食い違ったまま `compose` すると、Notion への投入が失敗する
+（記事の Markdown は書かれ、候補は処理済みになるので、あとで `notion-sync` で入れ直す）。
+
+```bash
+uv run imotech notion-setup --dry-run   # 改名・追加されるものを確認
+uv run imotech notion-setup
+uv run imotech notion-sync              # 食い違っていたあいだに投入し損ねた分を入れる（重複はしない）
+```
 
 #### 日々の運用
 

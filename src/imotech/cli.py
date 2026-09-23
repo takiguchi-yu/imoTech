@@ -27,6 +27,7 @@ from .notion import (
     create_database_payload,
     patch_properties_payload,
     schema_diff,
+    unrenamed_old_props,
 )
 from .pipeline import mark_skipped, matured_candidates, select
 from .render import (
@@ -871,8 +872,16 @@ def _notion_patch_existing(settings: Settings, args: argparse.Namespace) -> int:
         _p(f"既存のプロパティ: {len(existing)} 件 {sorted(existing)}")
         if rename:
             for old_name, spec in rename.items():
-                _p(f"改名: {old_name!r} → {spec['name']!r}（タイトル型は 1 つだけ持てるため）")
+                # 足さずに改名する（notion.py の RENAMED_PROPS / タイトル列）
+                _p(f"改名: {old_name!r} → {spec['name']!r}（列の値はそのまま残る）")
         _p(f"追加するプロパティ: {len(missing)} 件 {sorted(missing)}")
+        for old_name, why in sorted(unrenamed_old_props(existing).items()):
+            # 黙って残すと、値が旧名の列に取り残されたまま新しい列が空で並ぶ
+            _p(
+                f"★ 旧名の列 {old_name!r} は改名しません（{why}）。"
+                "値が要るなら Notion の UI で移し、要らなければ削除してください。",
+                err=True,
+            )
 
         if mismatched:
             # 型は API では変えられない。名前だけ見て「揃っている」と言うと、

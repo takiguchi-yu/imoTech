@@ -30,6 +30,7 @@ from imotech.notion import (
     create_database_payload,
     patch_properties_payload,
     schema_diff,
+    unrenamed_old_props,
 )
 from imotech.render import USE_CASE_NOTE
 
@@ -47,6 +48,7 @@ def _draft(**kw) -> ArticleDraft:
         tags=["rust", "async"],
         source_url="https://e.com/a",
         source_title="The Article",
+        source="hackernews",
         discussion_url="https://news.ycombinator.com/item?id=1",
         hatena_url="https://b.hatena.ne.jp/entry/s/e.com/a",
         engagement=Engagement(score=342, comments=187),
@@ -424,16 +426,47 @@ def test_必要なプロパティがすべて入る():
         "Status",
         "URL Hash",
         "Slug",
+        "Source",
         "Source URL",
-        "HN URL",
+        "Discussion URL",
         "Hatena URL",
-        "HN Score",
-        "HN Comments",
+        "Score",
+        "Comments",
         "Tags",
         "Collected At",
         "Model",
     ]:
         assert name in p, name
+
+
+def test_Sourceにソースの名前が入る():
+    assert build_properties(_draft(source="qiita"))["Source"] == {"select": {"name": "qiita"}}
+
+
+def test_知らないソースの名前もそのまま送る():
+    # Select に無い名前は Notion が選択肢を足す。ソースを足しても DB 側の作業は要らない
+    p = build_properties(_draft(source="zenn"))
+    assert p["Source"] == {"select": {"name": "zenn"}}
+
+
+def test_ソースが空ならSourceを送らない():
+    # 空の名前は Notion が受け付けない。キーごと外せば空欄で作られる
+    assert "Source" not in build_properties(_draft(source=""))
+
+
+def test_改名しない旧名の列を知らせる():
+    # 型が違う旧名、新名と並んでいる旧名は黙って残る。notion-setup が知らせる
+    existing = _before_m8() | {"HN Score": {"type": "rich_text"}}
+    assert set(unrenamed_old_props(existing)) == {"HN Score"}
+    both = _existing(**{"HN URL": {"type": "url"}})
+    assert set(unrenamed_old_props(both)) == {"HN URL"}
+    # 改名するものは知らせない
+    assert unrenamed_old_props(_before_m8()) == {}
+
+
+def test_ソース固有の名前の列を作らない():
+    # 列は意味ごとに 1 つ。ソースを足すたびに列が増えないこと
+    assert not [k for k in DATABASE_SCHEMA if "HN" in k or "Qiita" in k]
 
 
 def test_タグはmulti_selectになる():
@@ -694,9 +727,67 @@ def test_型の不一致を検出する():
 
 def test_型の不一致は追加対象にしない():
     # 追加しようとしても Notion は受け付けない。API では直せないものとして分ける
-    missing, _, mismatched = schema_diff(_existing(**{"HN Score": {"type": "rich_text"}}))
-    assert "HN Score" not in missing
-    assert "HN Score" in mismatched
+    missing, _, mismatched = schema_diff(_existing(**{"Score": {"type": "rich_text"}}))
+    assert "Score" not in missing
+    assert "Score" in mismatched
+
+
+def _before_m8() -> dict:
+    """M8 の前の本番 DB（Hacker News 固定の名前で、Source 列が無い）。"""
+    existing = _existing()
+    for new in ("Discussion URL", "Score", "Comments", "Source"):
+        del existing[new]
+    existing |= {
+        "HN URL": {"type": "url"},
+        "HN Score": {"type": "number"},
+        "HN Comments": {"type": "number"},
+    }
+    return existing
+
+
+def test_旧名の列は足さずに改名する():
+    # 足すと値の無い同じ意味の列が並び、既存ページの値は旧名の列に取り残される
+    missing, rename, mismatched = schema_diff(_before_m8())
+    assert rename == {
+        "HN URL": {"name": "Discussion URL"},
+        "HN Score": {"name": "Score"},
+        "HN Comments": {"name": "Comments"},
+    }
+    # Source は旧名が無いので足す
+    assert sorted(missing) == ["Source"]
+    assert mismatched == {}
+
+
+def test_旧名の列でも型が違えば改名しない():
+    # 改名しても値を書けない。新しい列を足す
+    existing = _before_m8() | {"HN Score": {"type": "rich_text"}}
+    missing, rename, _ = schema_diff(existing)
+    assert "HN Score" not in rename
+    assert "Score" in missing
+
+
+def test_改名のあとは差分が無い():
+    # 2 回目の notion-setup が何もしないこと（新名の列があれば旧名は見ない）。
+    # 旧名の列を手で作り直した・消し忘れた、の形で旧名と新名が両方ある場合も改名しない
+    after = _existing(
+        **{
+            "HN URL": {"type": "url"},
+            "HN Score": {"type": "number"},
+            "HN Comments": {"type": "number"},
+        }
+    )
+    missing, rename, mismatched = schema_diff(after)
+    assert missing == {} and rename == {} and mismatched == {}
+
+
+def test_M8前のDBへのPATCHは改名とSourceの追加():
+    props = patch_properties_payload(_before_m8())["properties"]
+    assert props == {
+        "HN URL": {"name": "Discussion URL"},
+        "HN Score": {"name": "Score"},
+        "HN Comments": {"name": "Comments"},
+        "Source": {"select": {}},
+    }
 
 
 def test_タイトル列が別名なら改名にする():
