@@ -444,6 +444,56 @@ generatedAt: 2026-09-22T06:12:31Z
 
 `hatenaUrl` は `https://b.hatena.ne.jp/entry/s/` + 元記事 URL から scheme を除いたもの（https の場合）。**API は呼ばず、文字列として組み立てるだけ**。
 
+### 2.6 アイキャッチ（OG 画像）
+
+記事ごとの**タイトルカード**を、ビルド時に `dist/og/<slug>.png` として書き出す
+（`site/src/pages/og/[slug].png.ts`）。記事ページの見出しの直下に出し、同じ画像を `og:image` にも使う。
+
+| 項目 | 決めたこと | 根拠 |
+|---|---|---|
+| 中身 | サイト名 + 記事タイトル + ソース名と注目度（`Hacker News ・ 1098 points / 452 コメント`） | ユーザーの判断。注目度の書き方は記事ページの見出し下と揃える |
+| 大きさ | 1200×630（1.91:1）、PNG | [Meta の推奨](https://developers.facebook.com/docs/sharing/webmasters/images)。1.91:1 に近いほどフィードで切り抜かれない |
+| 描き方 | **Satori**（要素 → SVG）+ **Resvg**（SVG → PNG） | satori の作者側の参照実装 `@vercel/og` と同じ構成（[Vercel](https://vercel.com/docs/og-image-generation)） |
+| フォント | Noto Sans CJK JP Bold の公式 OTF を同梱（`site/fonts/`） | fontsource（Google Fonts 版）では `𠮷髙﨑鷗①②③` が欠けた。出典とハッシュは `site/fonts/README.md` |
+| タイトルの大きさ | 64 / 56 / 48 / 42 px から、**3 行に収まるいちばん大きい字**。42 px でも収まらなければ 4 行で省略記号 | 小さい字で押し込むより、SNS の縮小表示でも読める大きさを優先する |
+| 行数の数え方 | **見積もらず、実際にレイアウトして数える**（`measureTitleLines`。高さを渡さずに組むと satori は中身の高さの SVG を返す。1 回 1〜2 ms） | 字数からの見積もりは、1 行の字数の端数と「英単語は途中で折り返さない」ことで外れた。既存記事の 1 本（52 字）が 3 行の見込みで 4 行になっていた |
+| 長い英単語・URL | `wordBreak: "break-word"` | 指定が無いと、1 行より長い単語が画像の右端で切れる。`break-all` だとどの英単語も字の途中で切れる |
+| 記事ページの `<img>` | `alt=""`、`width` / `height` を明記 | 画像の文字は直上の見出しと同じで、読み上げると 2 回聞かせる（[WAI](https://www.w3.org/WAI/tutorials/images/decorative/)）。SNS 向けの代替テキストは `og:image:alt` に別に書く |
+
+**採らなかったもの**
+
+- **生成 AI の画像** — Gemini の画像生成は無料枠で使えない（[料金表](https://ai.google.dev/gemini-api/docs/pricing)で全モデル "Not available"）
+- **元記事の og:image の流用** — 他人の画像の無断転載になる（はてブの OGP プレビューを「コメント本文が逐語で入り実質的な転載になる」として避けたのと同じ理由、`.scratch/pipeline/M5-monetization.md`）
+
+**公開済みの記事だけに作る。** エンドポイントの `getStaticPaths` は記事ページと同じ
+`publishedArticles()` を使う。未公開記事の画像を作ると、ページは生成されないのに画像だけが
+公開され、**画像に描かれたタイトルから未公開記事の中身が漏れる**。
+`site/scripts/check-unpublished.mjs` がこの漏れも成果物で確かめる。
+
+**字の欠けはビルドを止めない。** フォントに無い字（絵文字など）は空白で描かれる。
+1 記事のために全記事の公開が止まるほうが害が大きいので、警告をログに出すだけにしている。
+既存記事のタイトルと落としやすい字は `site/src/lib/og-render.test.ts` が当てている。
+
+**OGP のタグ**（`site/src/layouts/Base.astro`）
+
+- `og:title` / `og:description` / `og:url` / `og:type` / `og:site_name` / `og:locale` は全ページに出す
+  （これまで 1 つも無く、共有してもタイトルも画像も出なかった）
+- `og:image` とその寸法・`og:image:alt` は、画像のあるページ（記事）だけ
+- **`og:url` と `og:image` は絶対 URL**。`astro.config.mjs` の `site`（`SITE_URL`）から作る。
+  SNS のクローラーは相対 URL を解決しない。`site/scripts/check-og.mjs` が成果物で確かめる
+- X の `twitter:*` も**明示的に出す**。X の公式の仕様ページが消えていて（`docs.x.com` のトップへ転送）、
+  og: へのフォールバックを一次情報で確かめられないため、頼らない
+
+**ビルド時間**: 1 枚あたり約 0.3 秒（ビルドの中で測ると、1 枚目だけフォントの読み込みで約 0.6〜0.75 秒）。
+**公開記事の全件を毎回描き直す**ので、公開記事が約 1,500 本を超えると、公開ワークフローの
+`timeout-minutes: 10` に近づく。そのときの手当て（差分だけ描く）は `.scratch/pipeline/M12-og-cache.md` に起票してある。
+いまは素直に毎回描く（キャッシュの複雑さに見合う問題がまだ起きていない）。
+
+**未公開漏れの検査は許可リスト方式**（`check-unpublished.mjs`）。`dist/og/` の下を全部数え、
+公開記事の画像でないものが 1 つでもあれば落とす。「未公開記事の名前のファイルがあるか」を見るだけだと、
+出力の場所が少しずれた（サブディレクトリ、ルートの形の変更）だけで漏れていても通ってしまう
+（M11 のレビューで実際にすり抜けた）。
+
 ---
 
 ## 3. Notion データベーススキーマ
@@ -874,11 +924,16 @@ imoTech/
 │   ├── astro.config.mjs
 │   ├── wrangler.jsonc             Workers + Static Assets
 │   ├── public/
+│   ├── fonts/                     アイキャッチ用の日本語フォント（ビルド時だけ使う。配らない）
+│   ├── scripts/                   ビルド出力の検査（未公開の漏れ / OG 画像）
 │   └── src/
 │       ├── content.config.ts      Content Collections のスキーマと IMO_PLACEHOLDER
 │       ├── lib/
 │       │   ├── imo.ts             ★ 公開判定と定数の唯一の定義元（npm test の対象）
-│       │   └── articles.ts        コレクションの取得・タグ集計・日付整形
+│       │   ├── articles.ts        コレクションの取得・タグ集計・日付整形
+│       │   ├── sources.ts         ソースの表示名と注目度の呼び名
+│       │   ├── og.ts              アイキャッチのレイアウト（描画はしない）
+│       │   └── og-render.ts       アイキャッチの描画（Satori + Resvg）
 │       ├── content/
 │       │   └── articles/          ★ 公開物の Markdown（compose が書く。M2 以降は publish が commit）
 │       ├── layouts/
@@ -889,6 +944,7 @@ imoTech/
 │           ├── about.astro        制作プロセスと AI 利用の開示
 │           ├── privacy.astro      プライバシーポリシー（AdSense 申請時に要る）
 │           ├── articles/[...slug].astro
+│           ├── og/[slug].png.ts   記事ごとのアイキャッチ（OG 画像）をビルド時に書き出す
 │           ├── tags/[tag].astro
 │           └── rss.xml.ts
 └── .github/

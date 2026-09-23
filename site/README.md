@@ -56,9 +56,16 @@ Python 側（`src/imotech/render.py`）の同名定数と一致していなけ�
 | `src/content.config.ts` | 記事コレクションのスキーマ |
 | `src/lib/imo.ts` | **公開判定と定数の唯一の定義元**。`npm test` の対象 |
 | `src/lib/articles.ts` | コレクションの取得・タグ集計・日付整形 |
-| `src/layouts/Base.astro` | 共通レイアウトとスタイル |
+| `src/lib/sources.ts` | ソースの表示名と注目度の呼び名（points / LGTM） |
+| `src/lib/og.ts` | アイキャッチ（OG 画像）の**レイアウト**。描画はしない |
+| `src/lib/og-render.ts` | アイキャッチの**描画**（Satori + Resvg、フォントの読み込み） |
+| `src/layouts/Base.astro` | 共通レイアウトとスタイル。OGP と X のカードのタグもここ |
 | `src/pages/index.astro` | 記事一覧 |
-| `src/pages/articles/[...slug].astro` | 記事詳細。出典と AI 利用の開示を描く |
+| `src/pages/articles/[...slug].astro` | 記事詳細。アイキャッチ・出典・AI 利用の開示を描く |
+| `src/pages/og/[slug].png.ts` | 記事ごとのアイキャッチ（OG 画像）をビルド時に PNG で書き出す |
+| `fonts/` | アイキャッチ用の日本語フォント（Noto Sans CJK JP Bold、OFL）。**ビルド時だけ使い、配らない**。出典は `fonts/README.md` |
+| `scripts/check-unpublished.mjs` | imo 未記入の記事が出力（ページ・RSS・sitemap・**OG 画像**）に漏れていないか |
+| `scripts/check-og.mjs` | 公開記事の OG 画像が 1200×630 で出ていて、og:image が絶対 URL で指しているか |
 | `src/pages/tags/[tag].astro` | タグ別一覧 |
 | `src/pages/rss.xml.ts` | RSS |
 | `src/pages/about.astro` | 制作プロセスと AI 利用の開示 |
@@ -73,3 +80,15 @@ Python 側（`src/imotech/render.py`）の同名定数と一致していなけ�
 ```bash
 SITE_URL=https://example.com npm run build
 ```
+
+## アイキャッチ（OG 画像）
+
+記事ごとに、**タイトルカードをビルド時に自動で描く**（サイト名 + 記事タイトル + ソース名と注目度）。
+記事ページの見出しの直下に出し、同じ画像を `og:image` にも使う。
+
+- **生成 AI の画像は使わない。** Gemini の画像生成は無料枠で使えない（https://ai.google.dev/gemini-api/docs/pricing ）
+- **元記事の画像も使わない。** 他人の画像の無断転載になる
+- 描くのは**公開済み（imo 記入済み）の記事だけ**。未公開記事の画像を作ると、画像のタイトルから中身が漏れる
+- 1 枚あたり約 0.3 秒（1 枚目だけフォントの読み込みで約 0.6〜0.75 秒）。**公開記事の全件を毎回描き直す**ので、公開記事が 100 本なら約 30 秒、約 1,500 本で公開ワークフローの 10 分の制限に近づく（手当ては `../.scratch/pipeline/M12-og-cache.md`）
+
+見た目を変えるときは `src/lib/og.ts`、フォントを差し替えるときは `fonts/README.md` を読む。

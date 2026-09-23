@@ -103,6 +103,12 @@ jobs:
       - name: 未記入の記事が出力に含まれないこと
         run: node scripts/check-unpublished.mjs
 
+      # 公開記事の OG 画像（アイキャッチ）が 1200×630 の PNG で出ていて、og:image が
+      # 絶対 URL でそれを指していること。どれか 1 つ崩れると、共有しても画像が出ない。
+      # **エラーにならずに壊れる**（SNS のクローラーが黙って画像を捨てる）ので、成果物で確かめる
+      - name: 公開記事の OG 画像が正しく出ていること
+        run: node scripts/check-og.mjs
+
       # dist が空でも `wrangler deploy` は警告なく成功し、公開サイトの全 URL が
       # 404 になる（実測: 空の dist で --dry-run が終了コード 0）。
       # 存在しないのはエラーになるが「あるが空」は誰も検知しないので、ここで見る。

@@ -1,10 +1,28 @@
 ---
+/** SNS で共有されたときの画像。**作り方はここでは知らない**（記事の OG 画像は
+ * `pages/og/[slug].png.ts` がビルド時に描く）。受け取った値をそのままタグにする。 */
+interface OgImage {
+  /** サイト内のパス（`/og/xxx.png`）。絶対 URL にはここで直す */
+  src: string;
+  width: number;
+  height: number;
+  /** 画像の説明。SNS 側で画像の代替テキストとして使われる */
+  alt: string;
+}
 interface Props {
   title: string;
   description?: string;
+  /** 記事ページは "article"、それ以外は "website"（https://ogp.me/#types ） */
+  type?: "website" | "article";
+  image?: OgImage;
 }
-const { title, description } = Astro.props;
+const { title, description, type = "website", image } = Astro.props;
 const site = "imoTech";
+const pageTitle = title === site ? site : `${title} | ${site}`;
+// og:url と og:image は**絶対 URL が要る**。site は astro.config.mjs の SITE_URL から来る
+// （CI と公開では未設定だとビルドが落ちるので、localhost が焼き込まれることはない）
+const pageUrl = new URL(Astro.url.pathname, Astro.site).href;
+const imageUrl = image ? new URL(image.src, Astro.site).href : undefined;
 ---
 
 <!doctype html>
@@ -12,8 +30,44 @@ const site = "imoTech";
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title === site ? site : `${title} | ${site}`}</title>
+    <title>{pageTitle}</title>
     {description && <meta name="description" content={description} />}
+    <link rel="canonical" href={pageUrl} />
+
+    {/* Open Graph（https://ogp.me/ ）。これまで 1 つも無く、共有してもタイトルも画像も出なかった */}
+    <meta property="og:site_name" content={site} />
+    <meta property="og:locale" content="ja_JP" />
+    <meta property="og:type" content={type} />
+    <meta property="og:title" content={title} />
+    {description && <meta property="og:description" content={description} />}
+    <meta property="og:url" content={pageUrl} />
+    {
+      image && (
+        <>
+          <meta property="og:image" content={imageUrl} />
+          {/* 寸法を書くと、クローラーが画像を落とさずに初回共有から描ける
+              （https://developers.facebook.com/docs/sharing/webmasters/images ） */}
+          <meta property="og:image:width" content={String(image.width)} />
+          <meta property="og:image:height" content={String(image.height)} />
+          <meta property="og:image:type" content="image/png" />
+          <meta property="og:image:alt" content={image.alt} />
+        </>
+      )
+    }
+
+    {/* X のカード。公式の仕様ページが消えていて og: へのフォールバックを一次情報で
+        確かめられないので、**頼らずに明示的に出す**（値は og: と同じ） */}
+    <meta name="twitter:card" content={image ? "summary_large_image" : "summary"} />
+    <meta name="twitter:title" content={title} />
+    {description && <meta name="twitter:description" content={description} />}
+    {
+      image && (
+        <>
+          <meta name="twitter:image" content={imageUrl} />
+          <meta name="twitter:image:alt" content={image.alt} />
+        </>
+      )
+    }
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="alternate" type="application/rss+xml" title={site} href="/rss.xml" />
   </head>
@@ -76,6 +130,9 @@ const site = "imoTech";
       h2 { font-size: 1.125rem; margin-top: 2.5rem; border-bottom: 1px solid var(--line); padding-bottom: 0.25rem; }
       h3 { font-size: 1rem; margin-top: 1.75rem; }
       .meta { color: var(--muted); font-size: 0.8125rem; }
+      /* アイキャッチ。画面幅に合わせて縮め、縦横比は width/height 属性から保つ。
+         カードは白地なので、暗い背景では枠線が無いと境目が見えない */
+      .eyecatch { display: block; width: 100%; height: auto; margin: 0.5rem 0 1rem; border: 1px solid var(--line); border-radius: 6px; }
       .tags { display: flex; flex-wrap: wrap; gap: 0.5rem; list-style: none; padding: 0; }
       .tags a { font-size: 0.75rem; text-decoration: none; border: 1px solid var(--line); border-radius: 999px; padding: 0.125rem 0.625rem; }
       .entries { list-style: none; padding: 0; }

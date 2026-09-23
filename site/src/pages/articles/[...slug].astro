@@ -2,6 +2,7 @@
 import { render } from "astro:content";
 import Base from "../../layouts/Base.astro";
 import { formatDate, publishedArticles } from "../../lib/articles";
+import { OG_HEIGHT, OG_WIDTH, ogImagePath } from "../../lib/og";
 import { hasSeparateDiscussion, scoreUnit, sourceLabel } from "../../lib/sources";
 
 export async function getStaticPaths() {
@@ -16,11 +17,34 @@ export async function getStaticPaths() {
 const { article } = Astro.props;
 const { Content } = await render(article);
 const d = article.data;
+// アイキャッチ兼 og:image。画像は pages/og/[slug].png.ts がビルド時に描く
+const eyecatch = { src: ogImagePath(article.id), width: OG_WIDTH, height: OG_HEIGHT };
 ---
 
-<Base title={d.title} description={d.sourceTitle}>
+<Base
+  title={d.title}
+  description={d.sourceTitle}
+  type="article"
+  image={{ ...eyecatch, alt: d.title }}
+>
   <article>
     <h1>{d.title}</h1>
+    {
+      /* **alt は空にする。** 画像の文字は直上の見出しと同じで、読み上げると 2 回聞かせることになる
+         （https://www.w3.org/WAI/tutorials/images/decorative/ — 隣のテキストで説明済みの画像は alt=""）。
+         SNS 向けの代替テキストは og:image:alt に別に書いてある。
+         width / height を書くのは、読み込み中にレイアウトがずれないようにするため。
+         ページ最上部の大きな画像なので最大の描画要素（LCP）になりやすく、先に取りに行かせる */
+    }
+    <img
+      class="eyecatch"
+      src={eyecatch.src}
+      width={eyecatch.width}
+      height={eyecatch.height}
+      alt=""
+      decoding="async"
+      fetchpriority="high"
+    />
     <p class="meta">
       {formatDate(d.publishedAt)} ・ {sourceLabel(d.source)} {d.score} {scoreUnit(d.source)} / {d.comments} コメント
     </p>

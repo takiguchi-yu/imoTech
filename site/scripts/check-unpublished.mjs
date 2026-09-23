@@ -7,7 +7,7 @@
  *
  * 実行: cd site && npm run build && node scripts/check-unpublished.mjs
  */
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { imoOf } from "../src/lib/imo.ts";
 
@@ -50,6 +50,31 @@ for (const file of files) {
   }
   if (sitemap.includes(slug)) {
     console.error(`::error file=${ARTICLES}/${file}::imo 未記入なのに sitemap に載っている`);
+    leaked += 1;
+  }
+}
+
+// OG 画像（pages/og/[slug].png.ts）。ページが作られなくても画像だけ出ていれば、
+// 画像に描かれたタイトルから未公開記事の中身が漏れる。
+//
+// **許可リスト方式で数える。** 「未公開記事の名前のファイルがあるか」を見るだけだと、
+// 出力の場所が少しずれた（サブディレクトリ、ルートの形の変更、フロントマターの slug）だけで
+// 漏れていても通ってしまう。dist/og/ の下を全部数え、公開記事の画像でないものが 1 つでもあれば落とす
+const OG_DIR = join(DIST, "og");
+const published = new Set(
+  files
+    .filter((f) => {
+      const raw = readFileSync(join(ARTICLES, f), "utf8");
+      const body = raw.startsWith("---\n") ? raw.slice(4).split("\n---\n").slice(1).join("\n---\n") : raw;
+      return imoOf(body) !== null;
+    })
+    .map((f) => `${f.replace(/\.md$/, "")}.png`),
+);
+const ogFiles = existsSync(OG_DIR) ? readdirSync(OG_DIR, { recursive: true }).map(String) : [];
+for (const rel of ogFiles) {
+  if (statSync(join(OG_DIR, rel)).isDirectory()) continue;
+  if (!published.has(rel)) {
+    console.error(`::error file=${join(OG_DIR, rel)}::公開記事のものではない OG 画像が出力に含まれている（未公開記事のタイトルが画像から漏れうる）`);
     leaked += 1;
   }
 }

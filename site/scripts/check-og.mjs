@@ -1,0 +1,94 @@
+/**
+ * 公開記事の OG 画像（アイキャッチ）が、成果物として正しく出ているかを検査する。
+ *
+ * **未公開記事の画像が漏れていないか**は check-unpublished.mjs の仕事で、ここは見ない。
+ * ここが見るのは、公開記事について「共有したのに画像が出ない」を起こす壊れ方だけ。
+ *
+ * - dist/og/<slug>.png があり、PNG で、1200×630、8 MB 以下
+ *   （https://developers.facebook.com/docs/sharing/webmasters/images ）
+ * - 記事ページの og:image が**絶対 URL**でその画像を指し、寸法のタグが画像と一致する
+ * - 記事ページのアイキャッチ（<img class="eyecatch">）が同じ画像を指す
+ *
+ * 実行: cd site && npm run build && node scripts/check-og.mjs
+ */
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { imoOf } from "../src/lib/imo.ts";
+import { OG_HEIGHT, OG_WIDTH, ogImagePath } from "../src/lib/og.ts";
+
+const ARTICLES = "src/content/articles";
+const DIST = "dist";
+const MAX_BYTES = 8 * 1024 * 1024;
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+if (!existsSync(DIST)) {
+  console.error(`${DIST}/ がありません。先に npm run build を実行してください。`);
+  process.exit(1);
+}
+
+/** PNG の IHDR から幅と高さを読む（先頭 8 バイトの署名の直後が IHDR）。 */
+function pngSize(buf) {
+  if (buf.length < 24 || !buf.subarray(0, 8).equals(PNG_SIGNATURE)) return null;
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+}
+
+/** `<meta property="og:image" content="...">` の content を取る。属性の順は問わない。 */
+function meta(html, key) {
+  const tag = html.match(new RegExp(`<meta[^>]*(?:property|name)="${key}"[^>]*>`));
+  return tag?.[0].match(/content="([^"]*)"/)?.[1];
+}
+
+const files = existsSync(ARTICLES) ? readdirSync(ARTICLES).filter((f) => f.endsWith(".md")) : [];
+
+let problems = 0;
+let checked = 0;
+const fail = (file, msg) => {
+  console.error(`::error file=${ARTICLES}/${file}::${msg}`);
+  problems += 1;
+};
+
+for (const file of files) {
+  const slug = file.replace(/\.md$/, "");
+  const raw = readFileSync(join(ARTICLES, file), "utf8");
+  const body = raw.startsWith("---\n") ? raw.slice(4).split("\n---\n").slice(1).join("\n---\n") : raw;
+  if (imoOf(body) === null) continue; // 未公開。check-unpublished.mjs の担当
+  checked += 1;
+
+  const src = ogImagePath(slug);
+  const png = join(DIST, src);
+  if (!existsSync(png)) {
+    fail(file, `OG 画像 ${png} が無い（共有しても画像が出ない）`);
+    continue;
+  }
+  const buf = readFileSync(png);
+  const size = pngSize(buf);
+  if (!size) fail(file, `${png} が PNG ではない`);
+  else if (size.width !== OG_WIDTH || size.height !== OG_HEIGHT)
+    fail(file, `${png} が ${size.width}×${size.height}（${OG_WIDTH}×${OG_HEIGHT} のはず）`);
+  if (statSync(png).size > MAX_BYTES) fail(file, `${png} が 8 MB を超えている`);
+
+  const page = join(DIST, "articles", slug, "index.html");
+  if (!existsSync(page)) {
+    fail(file, `記事ページ ${page} が無い`);
+    continue;
+  }
+  const html = readFileSync(page, "utf8");
+  const ogImage = meta(html, "og:image");
+  if (!ogImage) fail(file, "og:image が無い");
+  // SNS のクローラーは相対 URL を解決しない。絶対 URL でなければ画像は出ない
+  else if (!/^https?:\/\//.test(ogImage) || !ogImage.endsWith(src))
+    fail(file, `og:image が絶対 URL で ${src} を指していない: ${ogImage}`);
+  if (meta(html, "og:image:width") !== String(OG_WIDTH) || meta(html, "og:image:height") !== String(OG_HEIGHT))
+    fail(file, "og:image:width / og:image:height が画像の寸法と一致しない");
+  if (meta(html, "twitter:card") !== "summary_large_image") fail(file, "twitter:card が summary_large_image でない");
+  // src をそのまま正規表現に埋め込むと `.` が任意の 1 字に当たり、緩く一致してしまう
+  const esc = src.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!new RegExp(`<img[^>]*class="eyecatch"[^>]*src="${esc}"|<img[^>]*src="${esc}"[^>]*class="eyecatch"`).test(html))
+    fail(file, `記事ページのアイキャッチが ${src} を指していない`);
+}
+
+if (problems > 0) {
+  console.error(`\n${problems} 件の問題を検出しました。`);
+  process.exit(1);
+}
+console.log(`公開記事 ${checked} 件の OG 画像を確認しました（${OG_WIDTH}×${OG_HEIGHT}、og:image は絶対 URL）。`);
