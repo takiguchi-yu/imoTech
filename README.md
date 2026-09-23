@@ -99,7 +99,8 @@ Notion の処理は黙って飛ばされ、Markdown に直接書く運用のま�
 種類は **Internal**。作成後に表示される **Internal Integration Secret**（`ntn_` で始まる文字列）を
 `.env` の `NOTION_TOKEN=` に書く。
 
-同じ画面の「機能」で **コメントの挿入** を有効にしておく。`publish` が、imo が空のまま Approved にされた
+**コメントの挿入** も有効にしておく（Developer portal <https://app.notion.com/developers/connections> →
+そのコネクション → Configuration → Insert comments）。`publish` が、imo が空のまま Approved にされた
 ページを Draft に差し戻すとき、理由をそのページのコメントに残す。無効だとコメントだけが残らない
 （差し戻しは行い、ログに `[warn]` が出る）。
 
@@ -143,7 +144,8 @@ uv run imotech notion-setup             # 適用
 #### コードを更新したら
 
 **Notion のインテグレーションの権限が増える版もある。** imo が空の承認を差し戻すときにコメントを残す版からは
-「コメントの挿入」が要る（<https://www.notion.so/profile/integrations> → そのインテグレーション →「機能」）。
+「コメントの挿入」が要る（<https://app.notion.com/developers/connections> → そのコネクション → Configuration →
+Insert comments）。
 無効だと、差し戻しは行うがコメントだけが残らない（publish.yml のログに `[warn] … コメントを残せませんでした`）。
 
 **更新を main に push したら、次の `daily.yml`（06:17 JST）より前に `notion-setup` を実行する。**

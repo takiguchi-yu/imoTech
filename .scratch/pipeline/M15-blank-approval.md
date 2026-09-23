@@ -1,6 +1,6 @@
 # M15: imo が空のまま Approved にされたページを差し戻す
 
-**Status:** 完了（コメントの権限だけ人の操作待ち）
+**Status:** 完了
 **Blocked by:** なし
 
 Notion で imo が空のまま Approved にされたページは、公開されない（正しい）が、Approved のまま毎時黙って
@@ -26,15 +26,17 @@ Notion で imo が空のまま Approved にされたページは、公開され�
 - [x] Approved かつ imo 空（空白だけ含む）を Draft に戻し、ログに `[差し戻し]`。公開はしない。承認が空のものだけの回でも差し戻す（テスト）
 - [x] 最後の編集から 30 分以内は差し戻さない（30 分ちょうどで切れる）。`--dry-run` は書かない（テスト）
 - [x] 本番: 該当 1 ページが Draft に戻った（手元で `uv run imotech publish`、8d85caf。前後で Draft 10 → 11、Approved 1 → 0）
-- [ ] **本番: 理由のコメントが残る** — 未達。`POST /comments` が 403「Insufficient permissions for this endpoint」。
-      インテグレーションの「コメントの挿入」が無効。有効にするのは人の操作（下の「着手できる条件」）
+- [x] **本番: 理由のコメントが残る** — 最初の差し戻しでは `POST /comments` が 403「Insufficient permissions for this endpoint」
+      （コネクションの Insert comments が無効）。ユーザーが Developer portal で有効にしたあと、差し戻した 1 ページに
+      コメントを後から付け、`GET /v1/comments?block_id=…` で 1 件付いていることを確かめた（2026-09-23）
 - [x] DESIGN 3.1 の規則（読み戻す / 絞り込む / 表から開く の 3 区分。2・3 は他の列から作れるなら列にしない）、3.2 の Approved → Draft と副作用
 - [x] `uv run ruff check .` / `uv run pytest -q`（512 件）/ CI success（8d85caf）
 
-## 着手できる条件（残り 1 件）
+## コメントの権限の有効にし方（実際に通った手順）
 
-<https://www.notion.so/profile/integrations> → imoTech のインテグレーション →「機能」で **コメントの挿入** を有効にする。
-そのあと、差し戻した 1 ページに理由のコメントを後から付ける（`NotionClient.add_comment` を 1 回呼ぶ）。
+<https://app.notion.com/developers/connections>（Developer portal）→ imoTech のコネクション → **Configuration** タブ →
+**Insert comments** を有効にして保存。`https://www.notion.so/profile/integrations` はこの環境ではログイン画面に
+飛ばされ、たどれなかった。
 
 ## レビュー
 
