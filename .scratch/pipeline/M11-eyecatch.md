@@ -185,3 +185,16 @@
 
 検証のあとに足したもの（描き比べのテスト 2 件、`renderTreeSvg` の切り出し）は自分で通した:
 `npm test` 53 件 / `npm run check` エラー・警告 0 / ビルドと 2 つの検査が通過。
+
+## 本番での確認（2026-09-23）
+
+ユーザーの承認を得て公開ワークフローを手動で実行した（run `35848272810`、全ステップ success）。
+本番 `https://imotech.higashi-kaijin.workers.dev` で確かめた。
+
+| 確認 | 結果 |
+|---|---|
+| 公開記事のページ | HTTP 200。`og:image` / `og:url` が本番の絶対 URL、`og:image:width=1200` / `height=630`、`twitter:card=summary_large_image`、見出しの直下に `<img class="eyecatch">` |
+| og:image の画像 | HTTP 200、`image/png`、44,980 バイト、`PNG image data, 1200 x 630` |
+| **未公開記事の画像の URL を推測して叩く** | **HTTP 404**（生成されていないので配られない） |
+
+X / Facebook のカードの実際の見え方は、各サービスの共有プレビューで確かめるしかない（X の公式の検証ツールは確認できていない）。
