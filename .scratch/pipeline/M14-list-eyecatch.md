@@ -105,3 +105,13 @@ A の Minor は小さく直せるので残課題にせず直した。
 ### 検証（ct-verifier）
 
 修正で影響を受けた 6 条件（fetchpriority の出し分け、check-og、check-unpublished、npm test・check、本番記事が無変更、DESIGN の節）がすべて ✅。
+
+## 追加: デプロイ前の検査（ユーザーの判断で M14 に含めた）
+
+`publish.yml` は成果物の検査（check-unpublished / check-og）を流さずにデプロイしていた。
+`publish.yml` の commit は `GITHUB_TOKEN` の push なので CI を起動せず、承認で公開されるたびの成果物は
+誰も検査していなかった。ビルドとデプロイの間に 2 つの検査を足し、落ちたらデプロイも Notion の更新もしない。
+
+- [x] `.github/workflows/publish.yml` に 2 ステップ（`actionlint` 通過）
+- [x] 失敗通知の原因一覧に「デプロイ前の検査が落ちた」を足した
+- [x] `docs/DESIGN.md`（1 節の表・5.5）と `README.md` のワークフロー表

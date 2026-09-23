@@ -71,7 +71,7 @@ flowchart TB
 | ワークフロー | トリガー | 責務 | timeout |
 |---|---|---|---|
 | `daily.yml` | cron `17 21 * * *` (UTC) = 毎日 06:17 JST + `workflow_dispatch` | collect → compose | 20 分 |
-| `publish.yml` | cron `23 * * * *` = 毎時 23 分 + `workflow_dispatch` | Approved 検知 → commit → ビルド → `wrangler deploy` → Notion を Published に | 10 分 |
+| `publish.yml` | cron `23 * * * *` = 毎時 23 分 + `workflow_dispatch` | Approved 検知 → commit → ビルド → 成果物の検査 → `wrangler deploy` → Notion を Published に | 10 分 |
 | `ci.yml` | `push` / `pull_request` | lint + test | 10 分 |
 
 **毎正時を避ける理由**: 公式ドキュメントに「The `schedule` event can be delayed during periods of high loads of GitHub Actions workflow runs. High load times include the start of every hour. If the load is sufficiently high enough, some queued jobs may be dropped.」と明記されている（[events-that-trigger-workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)）。分をずらしても drop の可能性は消えないため、**遅延・欠落を前提にした設計**（下記 5.5）にしている。
@@ -882,6 +882,11 @@ GET https://qiita.com/api/v2/items
 （[github-actions](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/)）。
 `GITHUB_TOKEN` による push は他のワークフローを起動しないため、デプロイは
 **`publish.yml` と同じジョブの中**に置く（別ワークフローに切り出すと走らない）。
+
+**デプロイの直前に、CI と同じ成果物の検査を流す**（`check-unpublished.mjs` と `check-og.mjs`）。
+同じ理由で、`publish.yml` が commit した記事は CI を起動しない。ここで見ないと、承認で公開されるたびの
+成果物は検査されないまま配られる。検査が落ちたらデプロイも Notion の更新もしない
+（Markdown は main に入っているので、直して `gh workflow run publish.yml` で再実行する）。
 
 `daily.yml` はデプロイしない。`compose` が書く記事は `imo` 未記入で、サイト側のゲートが
 公開から外すため、公開物は変わらない。

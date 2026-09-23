@@ -259,7 +259,7 @@ uv run imotech status   # imo 未記入と判定されている記事が挙が�
 | ワークフロー | いつ | 何をする |
 |---|---|---|
 | [`daily.yml`](./.github/workflows/daily.yml) | 毎日 06:17 JST（cron `17 21 * * *`）+ 手動 | `collect` → `compose` → 候補ストアと記事 Markdown を commit して push |
-| [`publish.yml`](./.github/workflows/publish.yml) | 毎時 23 分（cron `23 * * * *`）+ 手動 | `publish` → 承認された記事の `imo` を Markdown に差し込んで commit → ビルド → `wrangler deploy` → Notion を `Published` に進める |
+| [`publish.yml`](./.github/workflows/publish.yml) | 毎時 23 分（cron `23 * * * *`）+ 手動 | `publish` → 承認された記事の `imo` を Markdown に差し込んで commit → ビルド → 成果物の検査（未公開の漏れ・OG 画像）→ `wrangler deploy` → Notion を `Published` に進める |
 | [`ci.yml`](./.github/workflows/ci.yml) | `push` / `pull_request` | format・lint・test（Python とサイトの両方） |
 
 毎正時を避けているのは、公式に「High load times include the start of every hour」「some queued

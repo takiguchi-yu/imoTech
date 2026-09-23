@@ -124,6 +124,20 @@ jobs:
           # sitemap と RSS に焼き込まれたまま公開されるのを防ぐため
           SITE_URL: ${{ vars.SITE_URL }}
 
+      # CI（ci.yml）と同じ検査を、**配る直前の成果物**にかける。CI は main への push で走るが、
+      # この実行が commit した記事は GITHUB_TOKEN の push なので CI を起動しない。
+      # つまりここで見ないと、承認で公開されるたびの成果物は誰も検査しないまま配られる。
+      # 落ちたらデプロイしない（Notion も Published に進めない）。Markdown は main に入っている
+      - name: 未記入の記事が出力に含まれないこと
+        if: steps.commit.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        working-directory: site
+        run: node scripts/check-unpublished.mjs
+
+      - name: 公開記事の OG 画像と一覧のサムネイルが正しく出ていること
+        if: steps.commit.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        working-directory: site
+        run: node scripts/check-og.mjs
+
       - name: Cloudflare にデプロイする
         if: steps.commit.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         uses: cloudflare/wrangler-action@v4
@@ -176,6 +190,11 @@ jobs:
             - **ビルドが失敗した**（`SITE_URL が未設定です`）
               → `gh variable set SITE_URL --body https://imotech.<サブドメイン>.workers.dev`。
               Markdown は main に入っているので、直して `gh workflow run publish.yml`
+            - **デプロイ前の検査が落ちた**（「未記入の記事が出力に含まれないこと」または
+              「公開記事の OG 画像と一覧のサムネイルが正しく出ていること」）
+              → **デプロイはしていない**ので、公開サイトは前の状態のまま。ログの `::error` 行に
+              ページと理由が出ている。手元で `cd site && npm run build && node scripts/check-unpublished.mjs && node scripts/check-og.mjs`
+              で再現し、直して push してから `gh workflow run publish.yml`
             - **デプロイが失敗した**（`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`）
               → `gh secret list` で更新日を確認する。トークンの権限は
               「Edit Cloudflare Workers」。**直したら `gh workflow run publish.yml` で
