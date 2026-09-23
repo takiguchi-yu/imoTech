@@ -19,11 +19,11 @@ EMAIL_PLACEHOLDER = "[メールアドレス]"
 # CSS の @media や Python のデコレータに誤爆しうるが、PII を残すより誤爆を取る。
 _MENTION = re.compile(r"(?<![\w.])@([A-Za-z][A-Za-z0-9_-]{1,29})\b")
 
-# HN のプロフィールページ。リンクテキストとして本文に現れ、ハンドル名がそのまま残る。
+# 投稿者のプロフィールページ。リンクテキストとして本文に現れ、ハンドル名がそのまま残る。
 # スレッド参加者以外のハンドルも載るため、handles 集合による伏せ字では捕まらない。
-_HN_USER_URL = re.compile(
-    r"https?://(?:www\.)?news\.ycombinator\.com/user\?id=[A-Za-z0-9_-]+", re.IGNORECASE
-)
+#
+# **URL の形はソースごとに違う**ので、パターンはソース側が持つ
+# （`sources/hackernews.py` の `PROFILE_URL_RE`）。ここは受け取って適用するだけ。
 
 # URL 全般。ハンドル名の伏せ字が URL の一部に誤爆して壊すのを防ぐため、
 # 伏せ字をかける前に退避しておく。実データで ?ref=newsletter.com が
@@ -123,11 +123,12 @@ def strip_html(raw: str) -> str:
     return text.strip()
 
 
-def scrub(text: str, handles: frozenset[str]) -> str:
+def scrub(text: str, handles: frozenset[str], profile_url_re: re.Pattern[str] | None = None) -> str:
     """本文から PII を伏せる。
 
     順序に意味がある。
-    1. HN のプロフィール URL — スレッド外のハンドルも載るので最初に潰す
+    1. 投稿者のプロフィール URL — スレッド外のハンドルも載るので最初に潰す
+       （URL の形はソースごとに違うので、パターンは呼び出し側が渡す）
     2. ユーザー名を含む URL — リンクごと伏せる（温存すると PII が残る）
     3. 残った URL を退避 — ハンドル名の伏せ字が URL を壊すのを防ぐ
     4. メールアドレス — @メンションの正規表現より先に当てる
@@ -135,7 +136,8 @@ def scrub(text: str, handles: frozenset[str]) -> str:
     6. スレッドに実在するハンドル名
     7. URL を戻す
     """
-    text = _HN_USER_URL.sub(PLACEHOLDER, text)
+    if profile_url_re is not None:
+        text = profile_url_re.sub(PLACEHOLDER, text)
     text = _URL_WITH_HANDLE.sub(LINK_PLACEHOLDER, text)
 
     stash: list[str] = []
@@ -201,16 +203,23 @@ def scrub_url(url: str, reactions: list[Reaction]) -> str:
     return _scrub_in_url(url, handles_of(reactions))
 
 
-def scrub_title(title: str, reactions: list[Reaction]) -> str:
+def scrub_title(
+    title: str, reactions: list[Reaction], profile_url_re: re.Pattern[str] | None = None
+) -> str:
     """元記事のタイトルを匿名化する。
 
     タイトルは公開された見出しなので、素のハンドル名との衝突で文章を壊すほうが
     害が大きい。メールアドレス・@メンション・プロフィール URL だけを伏せる。
     """
-    return scrub(title, frozenset())
+    return scrub(title, frozenset(), profile_url_re)
 
 
-def anonymize(reactions: list[Reaction], *, limit: int) -> list[AnonymizedReaction]:
+def anonymize(
+    reactions: list[Reaction],
+    *,
+    limit: int,
+    profile_url_re: re.Pattern[str] | None = None,
+) -> list[AnonymizedReaction]:
     """反応を匿名化し、議論を呼んだ順に limit 件まで絞る。
 
     HN の API はコメント単位の score を返さないため、重みの手がかりは reply_count と
@@ -224,7 +233,7 @@ def anonymize(reactions: list[Reaction], *, limit: int) -> list[AnonymizedReacti
 
     cleaned: list[tuple[int, Reaction, str]] = []
     for i, r in enumerate(reactions):
-        text = scrub(strip_html(r.text), handles)
+        text = scrub(strip_html(r.text), handles, profile_url_re)
         if text:
             cleaned.append((i, r, text))
 

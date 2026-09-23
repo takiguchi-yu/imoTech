@@ -108,7 +108,12 @@ Notion 運用との対応:
   cli.py  (collect / compose / publish のエントリポイント)
     │
     ├──▶ store.py        候補の永続化。jsonl の読み書きをここだけに閉じる
-    ├──▶ sources/        StoryFeed / ReactionSource の Protocol と HN 実装
+    ├──▶ sources/        話題と反応を拾う層。**ソースを足すときはここだけ触る**
+    │      ├── __init__.py   StoryFeed / ReactionSource の Protocol
+    │      ├── registry.py   名前 → 具象（Factory Method）
+    │      ├── multi.py      複数ソースを 1 つに束ねる（Composite）
+    │      └── hackernews.py Algolia API の実装（Adapter を兼ねる）
+    ├──▶ links.py        外部サービスへのリンクの組み立て（はてブなど）
     ├──▶ extract.py      元記事本文の取得。robots.txt の判定を含む
     ├──▶ anonymize.py    反応から投稿者情報を落とす
     ├──▶ llm.py          Gemini 呼び出しとモデルフォールバック
@@ -121,12 +126,37 @@ Notion 運用との対応:
 **逆向きの参照を作らない**。`models.py` は他モジュールを import しない。`notion.py` は `store.py` を知らない（呼び出し順は `cli.py` が決める）。`render.py` は Notion の API 形式を知らず、`models.Draft` だけを受け取る。
 
 **採用したパターン**
-- **Repository** (`store.py`): 候補の永続化形式（jsonl）を 1 箇所に閉じる。将来 SQLite に替えても呼び出し側は変わらない。
-- **Strategy（薄く）** (`sources/`): `StoryFeed` / `ReactionSource` の Protocol を切り、実装は Hacker News のみ。Bluesky / Mastodon を後から足す前提があるため。
 
-**見送ったパターン**
-- **Chain of Responsibility**: ステージ連鎖に分岐が無く、関数の直列呼び出しで読めるため入れない。
-- **State**: Status の遷移は「人間が 1 回 Approved にする」だけで、状態ごとの振る舞いの差が無い。Enum + 遷移関数で足りる。
+`oo-design` の検討表を 1 行ずつ当てた結果。**GoF の実装形（クラス階層）をそのまま持ち込まず、
+Python の標準的な書き方へ翻訳している**。
+
+| パターン | どこ | 何を解いたか |
+|---|---|---|
+| **Repository** | `store.py` | 候補の永続化形式（jsonl）を 1 箇所に閉じる。将来 SQLite に替えても呼び出し側は変わらない |
+| **Strategy** | `sources/__init__.py` | `StoryFeed` / `ReactionSource`。抽象基底クラスではなく **Protocol** で構造的に満たす。実装は差し替え可能 |
+| **Factory Method** | `sources/registry.py` | 「どの具象を使うか」の分岐を 1 箇所に集める。クラス階層ではなく **「名前 → 生成関数」の辞書**に翻訳した |
+| **Composite** | `sources/multi.py` | 複数ソースを 1 つの `StoryFeed` に見せる。**呼び出し側は 1 つか複数かを意識しない** |
+| **Adapter** | 各ソースの `_story_from_*` | API の生の形（`objectID` / `created_at_i`）を `models` の型に変える。具象クラス自体が Adapter を兼ねる |
+
+**見送ったパターンと理由**
+
+| パターン | 見送った理由 |
+|---|---|
+| **Abstract Factory** | 作る対象が `StoryFeed` の 1 系統だけで、product family が無い。`ReactionSource` は同じオブジェクトが兼ねる |
+| **Builder** | ソースの生成に多段の組み立てが無い。コンストラクタ引数で足りる |
+| **Template Method** | 「HTTP で取る → パースする」の骨格は共通だが、**継承より合成**（`oo-design` の原則）。共通処理が要るなら HTTP クライアントを渡す形にする。いまは共通化するほどの重複が無い |
+| **Decorator** | リトライとレート制限を重ねる余地はあるが、いまは `HackerNews._get` が内蔵している。外に出すと**モジュールが浅くなる** |
+| **Facade** | `sources/__init__.py` が既に入口として働いている。追加の層は要らない |
+| **Chain of Responsibility** | ステージ連鎖に分岐が無く、関数の直列呼び出しで読める |
+| **State** | Status の遷移は「人間が 1 回 Approved にする」だけで、状態ごとの振る舞いの差が無い |
+| **Observer** | 通知先は失敗時の Issue 起票だけで、宛先が増える見込みが無い |
+| **Visitor** | 型による処理の分岐が無い |
+
+**ソースを足すときに触る範囲**
+
+`sources/` に 1 ファイル足し、`registry.py` の `_FACTORIES` に 1 行足すだけ。
+`cli.py` も `store.py` も `render.py` も変えない。これは `tests/test_sources.py` で
+ダミーのソースを登録して実証している。
 
 ---
 
@@ -139,7 +169,9 @@ Notion 運用との対応:
 ```json
 {
   "url_hash": "3f9a1c7e2b8d4506",
-  "hn_item_id": 41234567,
+  "source": "hackernews",
+  "source_id": "41234567",
+  "discussion_url": "https://news.ycombinator.com/item?id=41234567",
   "url": "https://example.com/posts/rust-async-split",
   "title": "The Rust async runtime split, one year later",
   "collected_at": "2026-09-21T21:17:04Z",
@@ -157,9 +189,11 @@ Notion 運用との対応:
 | フィールド | 型 | 説明 |
 |---|---|---|
 | `url_hash` | string(16) | **冪等性キー**。正規化 URL の SHA-256 先頭 16 桁（2.2 参照） |
-| `hn_item_id` | int | HN の item id。同じ URL が再投稿された場合の区別に使う |
+| `source` | string | 話題を拾ったソースの名前（`sources/registry.py` のキー） |
+| `source_id` | string | ソース内で一意な ID。数値 ID のソースもあるので文字列で持つ |
+| `discussion_url` | string | 反応が付いている場所。空なら未取得（旧形式の行がこれに当たる） |
 | `url` | string | 元記事の URL（正規化**前**の原文。表示と取得に使う） |
-| `title` | string | HN 上のタイトル（英語） |
+| `title` | string | ソース上のタイトル |
 | `collected_at` | RFC3339 | 収集時刻（UTC） |
 | `score_at_collect` / `comments_at_collect` | int | 収集時点の値。熟成の伸び幅を見るために残す |
 | `state` | enum | `pending` \| `drafted` \| `skipped` |
@@ -271,10 +305,11 @@ title: "Rust の非同期ランタイム分裂から1年、HN の争点は「互
 publishedAt: 2026-09-22T09:00:00+09:00
 sourceUrl: "https://example.com/posts/rust-async-split"
 sourceTitle: "The Rust async runtime split, one year later"
-hnUrl: "https://news.ycombinator.com/item?id=41234567"
+source: "hackernews"
+discussionUrl: "https://news.ycombinator.com/item?id=41234567"
 hatenaUrl: "https://b.hatena.ne.jp/entry/s/example.com/posts/rust-async-split"
-hnScore: 342
-hnComments: 187
+score: 342
+comments: 187
 tags: ["rust", "async", "ecosystem"]
 model: "gemini-3.8-flash"
 generatedAt: 2026-09-22T06:12:31Z
@@ -652,6 +687,12 @@ imoTech/
 │       ├── config.py              閾値・モデル一覧・環境変数の読み込み
 │       ├── models.py              Story / Candidate / Reaction / Draft の dataclass
 │       ├── urlhash.py             URL 正規化とハッシュ
+│       ├── links.py               外部サービスへのリンクの組み立て（はてブなど）
+│       ├── sources/               話題と反応を拾う層。ソースを足すときはここだけ
+│       │   ├── __init__.py        StoryFeed / ReactionSource の Protocol
+│       │   ├── registry.py        名前 → 具象（Factory Method）
+│       │   ├── multi.py           複数ソースを束ねる（Composite）
+│       │   └── hackernews.py      Algolia API の実装
 │       ├── store.py               candidates.jsonl の読み書き（Repository）
 │       ├── pipeline.py            熟成判定と選別（副作用を持たない純関数）
 │       ├── anonymize.py           反応から投稿者情報を落とす

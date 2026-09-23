@@ -1,6 +1,7 @@
 import rss from "@astrojs/rss";
 import type { APIContext } from "astro";
 import { publishedArticles } from "../lib/articles";
+import { sourceLabel } from "../lib/sources";
 
 export async function GET(context: APIContext) {
   const articles = await publishedArticles();
@@ -15,7 +16,7 @@ export async function GET(context: APIContext) {
       pubDate: a.data.publishedAt,
       link: `/articles/${a.id}/`,
       categories: a.data.tags,
-      description: `HN ${a.data.hnScore} points / ${a.data.hnComments} comments — ${a.data.sourceTitle}`,
+      description: `${sourceLabel(a.data.source)} ${a.data.score} points / ${a.data.comments} comments — ${a.data.sourceTitle}`,
     })),
     customData: "<language>ja</language>",
   });

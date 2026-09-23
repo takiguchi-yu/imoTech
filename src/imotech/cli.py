@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from .anonymize import anonymize, scrub_title, scrub_url
 from .config import REPO_ROOT, USER_AGENT, Settings, load_settings
 from .extract import ArticleFetcher
+from .links import hatena_bookmark_url
 from .llm import LLMError, build_user_prompt, load_system_instruction
 from .models import Candidate, CandidateState, SkipReason
 from .notion import (
@@ -38,7 +39,8 @@ from .render import (
     set_imo,
     write_article,
 )
-from .sources.hackernews import HackerNews
+from .sources import profile_url_pattern, supports_reactions
+from .sources.registry import create_feed
 from .store import CandidateStore
 from .urlhash import url_hash
 
@@ -63,8 +65,9 @@ def cmd_collect(settings: Settings, args: argparse.Namespace) -> int:
     store = CandidateStore(settings.candidates_path)
     before = len(store.load())
 
-    with HackerNews(user_agent=USER_AGENT) as hn:
-        stories = hn.fetch_stories(
+    with create_feed(settings.source_names, user_agent=USER_AGENT) as feed:
+        _p(f"ソース: {feed.name}")
+        stories = feed.fetch_stories(
             window_hours=settings.collect_window_hours,
             min_points=settings.collect_min_score,
             limit=settings.collect_hits_per_page,
@@ -83,12 +86,13 @@ def cmd_collect(settings: Settings, args: argparse.Namespace) -> int:
         candidates.append(
             Candidate(
                 url_hash=h,
-                hn_item_id=s.hn_item_id,
+                ref=s.ref,
+                discussion_url=s.discussion_url,
                 url=s.url,
                 title=s.title,
                 collected_at=now,
-                score_at_collect=s.points,
-                comments_at_collect=s.num_comments,
+                score_at_collect=s.engagement.score,
+                comments_at_collect=s.engagement.comments,
             )
         )
 
@@ -179,7 +183,7 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
     evaluated: set[str] = set()
     stories_by_hash: dict[str, object] = {}
     reactions_by_hash: dict[str, list] = {}
-    with HackerNews(user_agent=USER_AGENT) as hn:
+    with create_feed(settings.source_names, user_agent=USER_AGENT) as feed:
         for i, c in enumerate(probe_targets, 1):
             if time.monotonic() > deadline:
                 _p(
@@ -189,12 +193,18 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
                 break
             if i % 20 == 0:
                 _p(f"  現在値を取得中… {i}/{len(probe_targets)}")
-            story, reactions = hn.fetch_reactions(c.hn_item_id)
+            # 反応を持たないソース（RSS など）の候補は、ここで飛ばして
+            # 次の候補へ進む。閾値の判定に使う現在値も取れないので選出されない
+            if not supports_reactions(feed):
+                continue
+            story, reactions = feed.fetch_reactions(c.ref)
             if story is None:
                 continue
             c.evaluated_at = now
-            c.score_at_evaluate = story.points
-            c.comments_at_evaluate = story.num_comments
+            c.score_at_evaluate = story.engagement.score
+            c.comments_at_evaluate = story.engagement.comments
+            # 古い候補は議論の URL を持っていない。取り直したここで埋める
+            c.discussion_url = story.discussion_url
             evaluated.add(c.url_hash)
             stories_by_hash[c.url_hash] = story
             reactions_by_hash[c.url_hash] = reactions
@@ -246,6 +256,7 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
         timeout=settings.http_timeout_seconds,
         max_bytes=settings.max_response_bytes,
         max_chars=settings.max_article_chars,
+        profile_url_re=profile_url_pattern(feed),
     ) as fetcher:
         for i, c in enumerate(sel.selected, 1):
             story = stories_by_hash[c.url_hash]
@@ -260,11 +271,15 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
                 continue
 
             raw_reactions = reactions_by_hash[c.url_hash]
-            reactions = anonymize(raw_reactions, limit=settings.max_reactions)
+            reactions = anonymize(
+                raw_reactions,
+                limit=settings.max_reactions,
+                profile_url_re=profile_url_pattern(feed),
+            )
             # 元記事の URL とタイトルも匿名化を通す。ブログ主が自分の記事を投稿して
             # コメントもする場合、ドメイン名が投稿者ハンドルと一致する
             display_url = scrub_url(c.url, raw_reactions)
-            display_title = scrub_title(c.title, raw_reactions)
+            display_title = scrub_title(c.title, raw_reactions, profile_url_pattern(feed))
             _p(f"    本文 {len(article.text)} 文字 ({article.via}) / 反応 {len(reactions)} 件")
 
             if args.dry_run:
@@ -299,7 +314,7 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
                     article,
                     reactions,
                     url_hash=c.url_hash,
-                    hatena_url=c.hatena_url,
+                    hatena_url=hatena_bookmark_url(c.url),
                     display_url=display_url,
                     display_title=display_title,
                 )

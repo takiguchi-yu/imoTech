@@ -13,16 +13,16 @@ from imotech.llm import (
     build_user_prompt,
     slugify,
 )
-from imotech.models import AnonymizedReaction, ArticleSource, Story
+from imotech.models import AnonymizedReaction, ArticleSource, Engagement, SourceRef, Story
 from imotech.render import IMO_PLACEHOLDER, IMO_SENTINEL
 
 STORY = Story(
-    hn_item_id=42,
+    ref=SourceRef("hackernews", "42"),
     url="https://e.com/a",
     title="Example Title",
-    points=342,
-    num_comments=187,
+    engagement=Engagement(score=342, comments=187),
     created_at=datetime(2026, 9, 20, tzinfo=UTC),
+    discussion_url="https://news.ycombinator.com/item?id=42",
 )
 ARTICLE = ArticleSource(text="本文の中身", via="trafilatura")
 REACTIONS = [AnonymizedReaction(label="C1", text="ある反応", depth=0, reply_count=4)]
@@ -149,9 +149,9 @@ def test_全モデルで失敗したらLLMErrorを投げる():
 def test_生成結果にStoryのメタ情報が載る():
     d = _run(_gen()).draft
     assert d.url_hash == "abc123"
-    assert d.hn_url == "https://news.ycombinator.com/item?id=42"
+    assert d.discussion_url == "https://news.ycombinator.com/item?id=42"
     assert d.hatena_url == "https://b/x"
-    assert (d.hn_score, d.hn_comments) == (342, 187)
+    assert (d.engagement.score, d.engagement.comments) == (342, 187)
     assert d.model == "m1"
 
 

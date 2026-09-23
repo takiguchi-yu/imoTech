@@ -28,7 +28,7 @@ import Base from "../layouts/Base.astro";
       <tr><th>工程</th><th>担当</th></tr>
     </thead>
     <tbody>
-      <tr><td>話題の収集（Hacker News の API から）</td><td>機械</td></tr>
+      <tr><td>話題の収集（各ソースの API から）</td><td>機械</td></tr>
       <tr><td>「議論になったか」の判定（スコアとコメント数の閾値）</td><td>機械</td></tr>
       <tr><td>元記事の本文取得</td><td>機械（robots.txt を確認したうえで）</td></tr>
       <tr><td>元記事の要旨の作成</td><td><strong>生成 AI</strong>（Google Gemini）</td></tr>
@@ -47,7 +47,7 @@ import Base from "../layouts/Base.astro";
   <h2>引用元のコメントの扱い</h2>
 
   <p>
-    Hacker News のコメントは<strong>原文を転載していません</strong>。個々の発言を訳して並べるのではなく、論点ごとに再構成した文章として掲載しています。
+    各ソースのコメントは<strong>原文を転載していません</strong>。個々の発言を訳して並べるのではなく、論点ごとに再構成した文章として掲載しています。
     投稿者のハンドル名・メールアドレス・プロフィールへのリンクは、生成 AI に渡す前の段階で機械的に取り除いています。
   </p>
 

@@ -3,10 +3,11 @@ title: "OpenAI のアドトラッキング機構と、AI チャットサービ�
 publishedAt: 2026-09-22T00:03:51+09:00
 sourceUrl: "https://www.buchodi.com/chatgpt-now-knows-what-you-do-on-other-websites-via-ad-collector/"
 sourceTitle: "ChatGPT now knows what you do on other websites via ad collector"
-hnUrl: "https://news.ycombinator.com/item?id=49776729"
+source: "hackernews"
+discussionUrl: "https://news.ycombinator.com/item?id=49776729"
 hatenaUrl: "https://b.hatena.ne.jp/entry/s/www.buchodi.com/chatgpt-now-knows-what-you-do-on-other-websites-via-ad-collector/"
-hnScore: 735
-hnComments: 365
+score: 735
+comments: 365
 tags: ["openai", "privacy", "tracking", "chatgpt", "adtech"]
 model: "gemini-3.5-flash-lite"
 generatedAt: 2026-09-21T15:03:51+00:00

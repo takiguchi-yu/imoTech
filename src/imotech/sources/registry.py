@@ -1,0 +1,57 @@
+"""名前からソースを作る（GoF: Factory Method）。
+
+クラス階層は作らない。**「名前 → 生成関数」の辞書**が Python での素直な形で、
+`oo-design` の「GoF の実装形をそのまま持ち込まず、その言語の標準的な書き方へ翻訳する」
+に従っている。
+
+ソースを足すときはこのファイルの `_FACTORIES` に 1 行足すだけでよい。
+`cli.py` は触らない。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable
+
+from . import StoryFeed
+from .hackernews import HackerNews
+
+#: 名前 → 生成関数。生成関数は `user_agent` をキーワードで受け取る。
+_FACTORIES: dict[str, Callable[..., StoryFeed]] = {
+    HackerNews.name: HackerNews,
+}
+
+
+def available() -> list[str]:
+    """使えるソースの名前。設定の検証とエラーメッセージに使う。"""
+    return sorted(_FACTORIES)
+
+
+def register(name: str, factory: Callable[..., StoryFeed]) -> None:
+    """ソースを足す。テストでダミーを差し込むときにも使う。"""
+    _FACTORIES[name] = factory
+
+
+def create(name: str, **kwargs: object) -> StoryFeed:
+    """名前からソースを 1 つ作る。知らない名前なら候補を添えて落とす。"""
+    try:
+        factory = _FACTORIES[name]
+    except KeyError:
+        raise ValueError(
+            f"知らないソース {name!r} です。使えるのは {', '.join(available())}"
+        ) from None
+    return factory(**kwargs)
+
+
+def create_feed(names: Iterable[str], **kwargs: object) -> StoryFeed:
+    """名前の並びから `StoryFeed` を 1 つ作る。
+
+    2 つ以上なら `MultiFeed` で束ねる。**呼び出し側は 1 つか複数かを意識しない** —
+    返ってくるのはいつも 1 つの `StoryFeed` で、これが Composite を入れた理由。
+    """
+    from .multi import MultiFeed
+
+    wanted = [n.strip() for n in names if n.strip()]
+    if not wanted:
+        raise ValueError(f"ソースが指定されていません。使えるのは {', '.join(available())}")
+    feeds = [create(n, **kwargs) for n in wanted]
+    return feeds[0] if len(feeds) == 1 else MultiFeed(feeds)

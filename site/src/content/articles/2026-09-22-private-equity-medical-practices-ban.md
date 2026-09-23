@@ -3,10 +3,11 @@ title: "プライベートエクイティによる医療機関買収を禁止す
 publishedAt: 2026-09-22T12:27:15+09:00
 sourceUrl: "https://truthout.org/articles/warren-introduces-bill-to-ban-private-equity-from-owning-medical-practices/"
 sourceTitle: "Bill to Ban Private Equity from Owning Medical Practices"
-hnUrl: "https://news.ycombinator.com/item?id=49780630"
+source: "hackernews"
+discussionUrl: "https://news.ycombinator.com/item?id=49780630"
 hatenaUrl: "https://b.hatena.ne.jp/entry/s/truthout.org/articles/warren-introduces-bill-to-ban-private-equity-from-owning-medical-practices/"
-hnScore: 489
-hnComments: 364
+score: 489
+comments: 364
 tags: ["healthcare", "economics", "private-equity", "regulation"]
 model: "gemini-3.8-flash"
 generatedAt: 2026-09-22T03:27:15Z

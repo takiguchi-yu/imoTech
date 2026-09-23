@@ -149,7 +149,7 @@ def build_blocks(draft: ArticleDraft) -> list[dict]:
         {"type": "divider", "divider": {}},
         _heading(2, "出典"),
         _bullet(f"元記事: {draft.source_url}"),
-        _bullet(f"Hacker News: {draft.hn_url}"),
+        _bullet(f"議論: {draft.discussion_url}"),
         _bullet(f"はてなブックマーク: {draft.hatena_url}"),
         _paragraph(
             f"生成モデル: {draft.model} / "
@@ -168,10 +168,10 @@ def build_properties(draft: ArticleDraft, *, collected_at: datetime | None = Non
         PROP_URL_HASH: {"rich_text": _rich_text(draft.url_hash)},
         PROP_SLUG: {"rich_text": _rich_text(draft.slug)},
         PROP_SOURCE_URL: {"url": draft.source_url},
-        PROP_HN_URL: {"url": draft.hn_url},
+        PROP_HN_URL: {"url": draft.discussion_url},
         PROP_HATENA_URL: {"url": draft.hatena_url},
-        PROP_HN_SCORE: {"number": draft.hn_score},
-        PROP_HN_COMMENTS: {"number": draft.hn_comments},
+        PROP_HN_SCORE: {"number": draft.engagement.score},
+        PROP_HN_COMMENTS: {"number": draft.engagement.comments},
         PROP_TAGS: {"multi_select": [{"name": t} for t in draft.tags]},
         PROP_COLLECTED_AT: {
             "date": {"start": (collected_at or generated).isoformat(timespec="seconds")}

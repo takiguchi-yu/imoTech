@@ -13,10 +13,13 @@ const articles = defineCollection({
     publishedAt: z.coerce.date(),
     sourceUrl: z.string().url(),
     sourceTitle: z.string(),
-    hnUrl: z.string().url(),
+    // 話題を拾ったソース。表示の出し分けに使う（lib/sources.ts の SOURCE_LABELS）
+    source: z.string().default("hackernews"),
+    // 議論が付いている場所。Hacker News はスレッド、Zenn や Qiita は記事ページ自身
+    discussionUrl: z.string().url(),
     hatenaUrl: z.string().url(),
-    hnScore: z.number().int(),
-    hnComments: z.number().int(),
+    score: z.number().int(),
+    comments: z.number().int(),
     tags: z.array(z.string()).default([]),
     model: z.string(),
     generatedAt: z.coerce.date(),

@@ -3,10 +3,11 @@ title: "スペインによるArchive.today遮断命令を受け、HNでは政府
 publishedAt: 2026-09-22T12:27:02+09:00
 sourceUrl: "https://reclaimthenet.org/spain-blocks-archive-today-and-mirrors"
 sourceTitle: "Spain orders blocks on Archive.today and its mirrors"
-hnUrl: "https://news.ycombinator.com/item?id=49772961"
+source: "hackernews"
+discussionUrl: "https://news.ycombinator.com/item?id=49772961"
 hatenaUrl: "https://b.hatena.ne.jp/entry/s/reclaimthenet.org/spain-blocks-archive-today-and-mirrors"
-hnScore: 531
-hnComments: 413
+score: 531
+comments: 413
 tags: ["spain", "censorship", "copyright", "archiving"]
 model: "gemini-3.6-flash"
 generatedAt: 2026-09-22T03:27:02Z

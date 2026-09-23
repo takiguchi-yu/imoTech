@@ -3,10 +3,11 @@ title: "LLMに名作RTS『スタークラフト』を戦わせる評価が登場
 publishedAt: 2026-09-23T08:37:39+09:00
 sourceUrl: "https://bw.swerdlow.dev/report"
 sourceTitle: "Brood War Bench"
-hnUrl: "https://news.ycombinator.com/item?id=49766966"
+source: "hackernews"
+discussionUrl: "https://news.ycombinator.com/item?id=49766966"
 hatenaUrl: "https://b.hatena.ne.jp/entry/s/bw.swerdlow.dev/report"
-hnScore: 345
-hnComments: 156
+score: 345
+comments: 156
 tags: ["ai", "llm", "benchmark", "starcraft"]
 model: "gemini-3.8-flash"
 generatedAt: 2026-09-22T23:37:39Z

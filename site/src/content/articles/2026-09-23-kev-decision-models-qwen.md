@@ -3,10 +3,11 @@ title: "Qwen3.5ベースの軽量意思決定モデルKevが登場、HNでは汎
 publishedAt: 2026-09-23T08:36:56+09:00
 sourceUrl: "https://github.com/jaredpalmer/kev/tree/main"
 sourceTitle: "Kev: Tiny Jev-like family of decision models built on top of Qwen3.5"
-hnUrl: "https://news.ycombinator.com/item?id=49783999"
+source: "hackernews"
+discussionUrl: "https://news.ycombinator.com/item?id=49783999"
 hatenaUrl: "https://b.hatena.ne.jp/entry/s/github.com/jaredpalmer/kev/tree/main"
-hnScore: 452
-hnComments: 197
+score: 452
+comments: 197
 tags: ["machine-learning", "llm", "decision-models", "open-source"]
 model: "gemini-3.8-flash"
 generatedAt: 2026-09-22T23:36:56Z

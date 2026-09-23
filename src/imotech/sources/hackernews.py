@@ -6,21 +6,29 @@ kids を再帰的に辿ると 1 記事で数百リクエストになるため使
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from ..models import Reaction, Story
+from ..models import Engagement, Reaction, SourceRef, Story
 
 ALGOLIA_BASE = "https://hn.algolia.com/api/v1"
 NAME = "hackernews"
+
+#: 投稿者のプロフィールページ。匿名化で伏せ字にする（`anonymize.scrub` が使う）。
+#: **URL の形はソースごとに違う**ので、パターンはソース側が持つ。
+PROFILE_URL_RE = re.compile(
+    r"https?://(?:www\.)?news\.ycombinator\.com/user\?id=[A-Za-z0-9_-]+", re.IGNORECASE
+)
 
 
 class HackerNews:
     """StoryFeed と ReactionSource の両方を満たす。"""
 
     name = NAME
+    profile_url_re = PROFILE_URL_RE
 
     def __init__(
         self,
@@ -109,12 +117,26 @@ class HackerNews:
 
     # --- ReactionSource ---------------------------------------------------
 
-    def fetch_reactions(self, story_id: int) -> tuple[Story | None, list[Reaction]]:
-        data = self._get(f"/items/{story_id}")
+    def fetch_reactions(self, ref: SourceRef) -> tuple[Story | None, list[Reaction]]:
+        data = self._get(f"/items/{ref.id}")
         if not data:
             return None, []
         story = _story_from_item(data)
         return story, _walk_comments(data)
+
+
+def discussion_url(item_id: str | int) -> str:
+    """スレッドの URL。**Hacker News では元記事とは別の場所**にある。"""
+    return f"https://news.ycombinator.com/item?id={item_id}"
+
+
+def _ref(item_id: str | int) -> SourceRef:
+    return SourceRef(source=NAME, id=str(item_id))
+
+
+# --- Adapter: Algolia の返す形を models の型に変える -----------------------
+# API の項目名（objectID / created_at_i / num_comments）を知っているのはここだけ。
+# 別のソースを足すときは、そのソース用の同じ役割の関数をそのモジュールに書く。
 
 
 def _story_from_hit(hit: dict) -> Story | None:
@@ -127,12 +149,15 @@ def _story_from_hit(hit: dict) -> Story | None:
     if object_id is None or created is None:
         return None
     return Story(
-        hn_item_id=int(object_id),
+        ref=_ref(object_id),
         url=url,
         title=hit.get("title") or "",
-        points=int(hit.get("points") or 0),
-        num_comments=int(hit.get("num_comments") or 0),
+        engagement=Engagement(
+            score=int(hit.get("points") or 0),
+            comments=int(hit.get("num_comments") or 0),
+        ),
         created_at=datetime.fromtimestamp(int(created), tz=UTC),
+        discussion_url=discussion_url(object_id),
     )
 
 
@@ -143,12 +168,15 @@ def _story_from_item(item: dict) -> Story | None:
     if not url or item_id is None or created is None:
         return None
     return Story(
-        hn_item_id=int(item_id),
+        ref=_ref(item_id),
         url=url,
         title=item.get("title") or "",
-        points=int(item.get("points") or 0),
-        num_comments=_count_comments(item),
+        engagement=Engagement(
+            score=int(item.get("points") or 0),
+            comments=_count_comments(item),
+        ),
         created_at=datetime.fromtimestamp(int(created), tz=UTC),
+        discussion_url=discussion_url(item_id),
     )
 
 

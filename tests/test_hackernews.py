@@ -8,6 +8,7 @@
 import httpx
 import pytest
 
+from imotech.models import SourceRef
 from imotech.sources import ReactionSource, StoryFeed
 from imotech.sources.hackernews import MAX_COMMENT_DEPTH, HackerNews
 
@@ -41,7 +42,7 @@ def test_urlがnullのstoryは除外される():
     payload = {"hits": [_hit(1), {**_hit(2), "url": None}, {**_hit(3), "url": ""}], "nbPages": 1}
     with _client(lambda r: httpx.Response(200, json=payload)) as hn:
         got = hn.fetch_stories()
-    assert [s.hn_item_id for s in got] == [1]
+    assert [s.ref.id for s in got] == ["1"]
 
 
 def test_created_atが欠けたstoryは除外される():
@@ -99,7 +100,7 @@ def test_5xxのあと成功すれば結果を返す(monkeypatch):
 
     with _client(handler) as hn:
         got = hn.fetch_stories()
-    assert [s.hn_item_id for s in got] == [7]
+    assert [s.ref.id for s in got] == ["7"]
 
 
 # --- コメント木 -----------------------------------------------------------
@@ -123,16 +124,16 @@ def _c(cid, text="hello", children=None):
 def test_削除済みコメントはスキップする():
     payload = _item([_c(1), {**_c(2), "text": None}, _c(3)])
     with _client(lambda r: httpx.Response(200, json=payload)) as hn:
-        story, reactions = hn.fetch_reactions(1)
+        story, reactions = hn.fetch_reactions(SourceRef("hackernews", "1"))
     assert [r.comment_id for r in reactions] == [1, 3]
     # 削除済みは num_comments にも数えない
-    assert story.num_comments == 2
+    assert story.engagement.comments == 2
 
 
 def test_階層と返信数が取れる():
     payload = _item([_c(1, children=[_c(2), _c(3)])])
     with _client(lambda r: httpx.Response(200, json=payload)) as hn:
-        _, reactions = hn.fetch_reactions(1)
+        _, reactions = hn.fetch_reactions(SourceRef("hackernews", "1"))
     by_id = {r.comment_id: r for r in reactions}
     assert (by_id[1].depth, by_id[1].reply_count) == (0, 2)
     assert (by_id[2].depth, by_id[2].reply_count) == (1, 0)
@@ -143,7 +144,7 @@ def test_深すぎる枝は打ち切る():
     for i in range(MAX_COMMENT_DEPTH + 10):
         node = _c(i, children=[node])
     with _client(lambda r: httpx.Response(200, json=_item([node]))) as hn:
-        _, reactions = hn.fetch_reactions(1)
+        _, reactions = hn.fetch_reactions(SourceRef("hackernews", "1"))
     assert len(reactions) <= MAX_COMMENT_DEPTH + 1
 
 
@@ -151,7 +152,7 @@ def test_取得に失敗したらNoneと空リストを返す(monkeypatch):
     # 呼び出し側はこれを見て「今回は判定不能」として pending のまま残す
     monkeypatch.setattr("imotech.sources.hackernews.time.sleep", lambda _: None)
     with _client(lambda r: httpx.Response(500)) as hn:
-        assert hn.fetch_reactions(1) == (None, [])
+        assert hn.fetch_reactions(SourceRef("hackernews", "1")) == (None, [])
 
 
 @pytest.mark.parametrize("bad", [b"not json", b"{"])

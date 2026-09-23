@@ -3,10 +3,11 @@ title: "サムスンがHBM4生産を倍増へ、消費者向けDRAMの価格高�
 publishedAt: 2026-09-22T12:25:37+09:00
 sourceUrl: "https://en.sedaily.com/finance/2026/09/20/samsung-to-double-hbm4-output-next-year-sources-say"
 sourceTitle: "Samsung is expected to more than double output of its HBM4 and HBM4E DRAM"
-hnUrl: "https://news.ycombinator.com/item?id=49778029"
+source: "hackernews"
+discussionUrl: "https://news.ycombinator.com/item?id=49778029"
 hatenaUrl: "https://b.hatena.ne.jp/entry/s/en.sedaily.com/finance/2026/09/20/samsung-to-double-hbm4-output-next-year-sources-say"
-hnScore: 547
-hnComments: 442
+score: 547
+comments: 442
 tags: ["samsung", "hbm", "dram", "semiconductor"]
 model: "gemini-3.5-flash"
 generatedAt: 2026-09-22T03:25:37Z

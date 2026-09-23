@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from imotech.config import REPO_ROOT
-from imotech.models import ArticleDraft, DiscoursePoint, GlossaryEntry
+from imotech.models import ArticleDraft, DiscoursePoint, Engagement, GlossaryEntry
 from imotech.render import (
     GLOSSARY_HEADING,
     IMO_PLACEHOLDER,
@@ -40,10 +40,9 @@ def _draft(**kw) -> ArticleDraft:
         tags=["rust", "async"],
         source_url="https://e.com/a",
         source_title="The Article",
-        hn_url="https://news.ycombinator.com/item?id=1",
+        discussion_url="https://news.ycombinator.com/item?id=1",
         hatena_url="https://b.hatena.ne.jp/entry/s/e.com/a",
-        hn_score=342,
-        hn_comments=187,
+        engagement=Engagement(score=342, comments=187),
         model="gemini-3.8-flash",
         generated_at=datetime(2026, 9, 21, 6, 12, tzinfo=UTC),
     )
@@ -72,10 +71,10 @@ def test_必要なキーがすべて出る():
         "publishedAt",
         "sourceUrl",
         "sourceTitle",
-        "hnUrl",
+        "discussionUrl",
         "hatenaUrl",
-        "hnScore",
-        "hnComments",
+        "score",
+        "comments",
         "tags",
         "model",
         "generatedAt",
@@ -100,8 +99,8 @@ def test_改行を含むタイトルでフロントマターが1行に収まる(
 
 def test_数値はクォートしない():
     fm = _frontmatter(to_markdown(_draft()))
-    assert fm["hnScore"] == "342"
-    assert fm["hnComments"] == "187"
+    assert fm["score"] == "342"
+    assert fm["comments"] == "187"
 
 
 def test_タグは配列で出る():
@@ -276,8 +275,8 @@ def test_改行とタブは残す():
 
 def test_全フィールドが期待した型で読み戻せる():
     fm = _parse_frontmatter(to_markdown(_draft()))
-    assert isinstance(fm["hnScore"], int)
-    assert isinstance(fm["hnComments"], int)
+    assert isinstance(fm["score"], int)
+    assert isinstance(fm["comments"], int)
     assert isinstance(fm["tags"], list)
     assert all(isinstance(t, str) for t in fm["tags"])
     assert isinstance(fm["title"], str)

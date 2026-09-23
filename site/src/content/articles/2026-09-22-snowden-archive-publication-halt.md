@@ -3,10 +3,11 @@ title: "スノーデン文書の公開が途絶えた理由とは、国家の圧
 publishedAt: 2026-09-22T12:23:38+09:00
 sourceUrl: "https://libroot.org/posts/what-happened-to-the-snowden-archive"
 sourceTitle: "What happened to the Snowden archive"
-hnUrl: "https://news.ycombinator.com/item?id=49780820"
+source: "hackernews"
+discussionUrl: "https://news.ycombinator.com/item?id=49780820"
 hatenaUrl: "https://b.hatena.ne.jp/entry/s/libroot.org/posts/what-happened-to-the-snowden-archive"
-hnScore: 685
-hnComments: 445
+score: 685
+comments: 445
 tags: ["snowden", "nsa", "surveillance", "journalism", "security"]
 model: "gemini-3.8-flash"
 generatedAt: 2026-09-22T03:23:38Z

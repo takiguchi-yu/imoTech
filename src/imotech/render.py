@@ -13,7 +13,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
-from .models import ArticleDraft, DiscoursePoint, GlossaryEntry
+from .models import ArticleDraft, DiscoursePoint, Engagement, GlossaryEntry
 
 JST = timezone(timedelta(hours=9))
 
@@ -114,10 +114,11 @@ def to_markdown(draft: ArticleDraft, *, published_at: datetime | None = None) ->
         f"publishedAt: {_iso(published)}",
         f"sourceUrl: {_yaml_str(draft.source_url)}",
         f"sourceTitle: {_yaml_str(draft.source_title)}",
-        f"hnUrl: {_yaml_str(draft.hn_url)}",
+        f"source: {_yaml_str(draft.source)}",
+        f"discussionUrl: {_yaml_str(draft.discussion_url)}",
         f"hatenaUrl: {_yaml_str(draft.hatena_url)}",
-        f"hnScore: {draft.hn_score}",
-        f"hnComments: {draft.hn_comments}",
+        f"score: {draft.engagement.score}",
+        f"comments: {draft.engagement.comments}",
         f"tags: {_yaml_list(draft.tags)}",
         f"model: {_yaml_str(draft.model)}",
         f"generatedAt: {_iso_z(generated)}",
@@ -349,8 +350,11 @@ def from_markdown(text: str) -> ArticleDraft:
             k, v = line.split(": ", 1)
             fm[k.strip()] = v.strip()
 
-    required = ["title", "sourceUrl", "sourceTitle", "hnUrl", "hatenaUrl", "model"]
+    required = ["title", "sourceUrl", "sourceTitle", "hatenaUrl", "model"]
     missing = [k for k in required if k not in fm]
+    # 議論の URL は新旧どちらのキーでもよい（旧: hnUrl）
+    if "discussionUrl" not in fm and "hnUrl" not in fm:
+        missing.append("discussionUrl")
     if missing:
         raise ValueError(f"フロントマターに {missing} が無い")
 
@@ -409,10 +413,16 @@ def from_markdown(text: str) -> ArticleDraft:
         glossary=glossary,
         source_url=source_url,
         source_title=_unquote_yaml(fm["sourceTitle"]),
-        hn_url=_unquote_yaml(fm["hnUrl"]),
+        # 旧キー（hnUrl / hnScore / hnComments）も読む。ソースが Hacker News だけ
+        # だった頃に書いた記事が残っているため（書き戻すと新しいキーになる）
+        # 旧記事は source を持たない。ソースが 1 つだった頃のものなので補う
+        source=_unquote_yaml(fm.get("source", "")) or "hackernews",
+        discussion_url=_unquote_yaml(fm.get("discussionUrl") or fm.get("hnUrl", "")),
         hatena_url=_unquote_yaml(fm["hatenaUrl"]),
-        hn_score=int(fm.get("hnScore", 0)),
-        hn_comments=int(fm.get("hnComments", 0)),
+        engagement=Engagement(
+            score=int(fm.get("score") or fm.get("hnScore") or 0),
+            comments=int(fm.get("comments") or fm.get("hnComments") or 0),
+        ),
         model=_unquote_yaml(fm["model"]),
         generated_at=datetime.fromisoformat(generated.replace("Z", "+00:00"))
         if generated

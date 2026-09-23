@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from imotech.models import Candidate, CandidateState, SkipReason
+from imotech.models import Candidate, CandidateState, SkipReason, SourceRef
 from imotech.pipeline import mark_skipped, matured_candidates, select
 
 NOW = datetime(2026, 9, 21, 12, 0, tzinfo=UTC)
@@ -11,7 +11,7 @@ NOW = datetime(2026, 9, 21, 12, 0, tzinfo=UTC)
 def _c(hours_ago: int, score=None, comments=None, h=None) -> Candidate:
     return Candidate(
         url_hash=h or f"h{hours_ago}",
-        hn_item_id=hours_ago,
+        ref=SourceRef("hackernews", str(hours_ago)),
         url=f"https://e.com/{hours_ago}",
         title="t",
         collected_at=NOW - timedelta(hours=hours_ago),

@@ -3,10 +3,11 @@ title: "推薦アルゴリズムによる注意の強奪への警鐘と、能動
 publishedAt: 2026-09-23T12:33:57+09:00
 sourceUrl: "https://alicegg.tech/2026/09/21/attention"
 sourceTitle: "Attention is all you have"
-hnUrl: "https://news.ycombinator.com/item?id=49787726"
+source: "hackernews"
+discussionUrl: "https://news.ycombinator.com/item?id=49787726"
 hatenaUrl: "https://b.hatena.ne.jp/entry/s/alicegg.tech/2026/09/21/attention"
-hnScore: 1039
-hnComments: 319
+score: 1039
+comments: 319
 tags: ["attention-economy", "social-media", "algorithms", "web"]
 model: "gemini-3.8-flash"
 generatedAt: 2026-09-23T03:33:57Z

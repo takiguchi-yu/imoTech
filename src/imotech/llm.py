@@ -103,7 +103,7 @@ def build_user_prompt(
         article.text,
         "",
         f"## Hacker News の反応（{len(reactions)} 件、投稿者情報は削除済み）",
-        f"スコア {story.points} / コメント {story.num_comments}",
+        f"スコア {story.engagement.score} / コメント {story.engagement.comments}",
         "",
     ]
     for r in reactions:
@@ -316,10 +316,10 @@ def _to_draft(
         glossary=glossary,
         source_url=story.url,
         source_title=story.title,
-        hn_url=story.hn_url,
+        source=story.ref.source,
+        discussion_url=story.discussion_url,
         hatena_url=hatena_url,
-        hn_score=story.points,
-        hn_comments=story.num_comments,
+        engagement=story.engagement,
         model=model,
         generated_at=now,
     )

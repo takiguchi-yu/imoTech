@@ -10,7 +10,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .models import Candidate, CandidateState
+from .models import Candidate, CandidateState, SourceRef
 
 
 def _to_rfc3339(dt: datetime | None) -> str | None:
@@ -38,7 +38,9 @@ def _from_rfc3339(s: str | None) -> datetime | None:
 def _to_dict(c: Candidate) -> dict:
     return {
         "url_hash": c.url_hash,
-        "hn_item_id": c.hn_item_id,
+        "source": c.ref.source,
+        "source_id": c.ref.id,
+        "discussion_url": c.discussion_url,
         "url": c.url,
         "title": c.title,
         "collected_at": _to_rfc3339(c.collected_at),
@@ -53,10 +55,32 @@ def _to_dict(c: Candidate) -> dict:
     }
 
 
+# ソースが 1 つだった頃のキー。この形で書かれた行が既に残っているので読めるようにする
+_LEGACY_SOURCE = "hackernews"
+
+
+def _ref_from_dict(d: dict) -> SourceRef:
+    """新旧どちらの形でも `SourceRef` にする。
+
+    `hn_item_id` しか持たない古い行（ソースが Hacker News だけだった頃に書いたもの）は、
+    そのソース名を補って読む。**書き戻すときは必ず新しい形になる**ので、
+    一度読んで保存すれば移行が済む。
+    """
+    if "source_id" in d:
+        return SourceRef(source=d.get("source") or _LEGACY_SOURCE, id=str(d["source_id"]))
+    if "hn_item_id" in d:
+        return SourceRef(source=_LEGACY_SOURCE, id=str(d["hn_item_id"]))
+    raise KeyError("source_id")
+
+
 def _from_dict(d: dict) -> Candidate:
     return Candidate(
         url_hash=d["url_hash"],
-        hn_item_id=d["hn_item_id"],
+        ref=_ref_from_dict(d),
+        # 古い行は議論の URL を持たない。**ここで組み立てない** — URL の規則は
+        # ソースの知識で、永続化層が持つと依存の向きが逆になる。
+        # 次に現在値を取り直したとき（cmd_compose）に Story から埋め直される
+        discussion_url=str(d.get("discussion_url") or ""),
         url=d["url"],
         title=d["title"],
         collected_at=_from_rfc3339(d["collected_at"]),

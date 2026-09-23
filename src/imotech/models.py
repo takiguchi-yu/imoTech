@@ -38,19 +38,51 @@ class Stance(StrEnum):
 
 
 @dataclass(frozen=True)
-class Story:
-    """Hacker News に投稿された 1 件の話題。記事を書く単位。"""
+class SourceRef:
+    """どのソースのどの投稿か。
 
-    hn_item_id: int
+    ソースが増えても Story の形を変えずに済むよう、識別子をここに閉じる。
+    **URL の組み立ては知らない** — 議論の場所はソースごとに違う（Hacker News は
+    スレッドが別 URL、Zenn や Qiita は記事ページそのもの）ので、各ソースが
+    `Story.discussion_url` に入れる。
+    """
+
+    source: str
+    """ソースの名前。`sources` の Registry のキーと一致する（例: "hackernews"）。"""
+
+    id: str
+    """ソース内で一意な識別子。数値 ID のソースもあるので文字列で持つ。"""
+
+    def __str__(self) -> str:
+        return f"{self.source}:{self.id}"
+
+
+@dataclass(frozen=True)
+class Engagement:
+    """どれだけ注目されたか。
+
+    呼び名はソースによって違う（Hacker News は points、Qiita は LGTM、
+    Zenn はいいね）ので、**意味で名前を付ける**。閾値の判定はこの 2 つだけを見る。
+    """
+
+    score: int = 0
+    comments: int = 0
+
+
+@dataclass(frozen=True)
+class Story:
+    """ソースに投稿された 1 件の話題。記事を書く単位。
+
+    `url` は元記事、`discussion_url` は反応が付いている場所。Hacker News では
+    別々だが、記事プラットフォーム（Zenn / Qiita / dev.to）では同じになる。
+    """
+
+    ref: SourceRef
     url: str
     title: str
-    points: int
-    num_comments: int
+    engagement: Engagement
     created_at: datetime
-
-    @property
-    def hn_url(self) -> str:
-        return f"https://news.ycombinator.com/item?id={self.hn_item_id}"
+    discussion_url: str = ""
 
 
 @dataclass
@@ -61,12 +93,13 @@ class Candidate:
     """
 
     url_hash: str
-    hn_item_id: int
+    ref: SourceRef
     url: str
     title: str
     collected_at: datetime
     score_at_collect: int
     comments_at_collect: int
+    discussion_url: str = ""
     state: CandidateState = CandidateState.PENDING
     evaluated_at: datetime | None = None
     score_at_evaluate: int | None = None
@@ -74,27 +107,10 @@ class Candidate:
     notion_page_id: str | None = None
     skip_reason: str | None = None
 
-    @property
-    def hn_url(self) -> str:
-        return f"https://news.ycombinator.com/item?id={self.hn_item_id}"
-
-    @property
-    def hatena_url(self) -> str:
-        """はてなブックマークのコメントページ。API は呼ばず URL を組み立てるだけ。
-
-        収益化を前提にしたため、はてなの API / oEmbed は利用規約上使えない
-        （Developer Center 利用規約 第4条1項）。リンクの設置は規約上自由。
-        """
-        if self.url.startswith("https://"):
-            return "https://b.hatena.ne.jp/entry/s/" + self.url[len("https://") :]
-        if self.url.startswith("http://"):
-            return "https://b.hatena.ne.jp/entry/" + self.url[len("http://") :]
-        return "https://b.hatena.ne.jp/entry/" + self.url
-
 
 @dataclass(frozen=True)
 class Reaction:
-    """HN の生コメント。author を持つので、そのまま LLM に渡してはいけない。
+    """ソースから取ってきた生のコメント。author を持つので、そのまま LLM に渡してはいけない。
 
     LLM へ渡してよいのは anonymize() を通した AnonymizedReaction だけ。
     """
@@ -110,8 +126,8 @@ class Reaction:
 class AnonymizedReaction:
     """投稿者を特定しうる情報を落としたコメント。LLM に渡せるのはこの型だけ。
 
-    HN の API はコメント単位の score を返さないため、議論の重みを測る手がかりは
-    reply_count と depth しかない。この 2 つは残す。
+    コメント単位の score を返さないソースがある（Hacker News の API がそう）ため、
+    議論の重みを測る手がかりは reply_count と depth に統一する。この 2 つは残す。
     """
 
     label: str
@@ -162,10 +178,11 @@ class ArticleDraft:
     glossary: list[GlossaryEntry] = field(default_factory=list)
     source_url: str = ""
     source_title: str = ""
-    hn_url: str = ""
+    source: str = ""
+    """話題を拾ったソースの名前（例: "hackernews"）。表示の出し分けに使う。"""
+    discussion_url: str = ""
     hatena_url: str = ""
-    hn_score: int = 0
-    hn_comments: int = 0
+    engagement: Engagement = field(default_factory=Engagement)
     model: str = ""
     generated_at: datetime | None = None
 

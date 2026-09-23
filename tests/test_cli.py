@@ -16,7 +16,9 @@ from imotech.models import (
     Candidate,
     CandidateState,
     DiscoursePoint,
+    Engagement,
     SkipReason,
+    SourceRef,
     Story,
 )
 from imotech.notion import NotionBlockLimitError, NotionError
@@ -28,7 +30,7 @@ from imotech.urlhash import url_hash
 def _c(h: str, hours_ago: int = 30) -> Candidate:
     return Candidate(
         url_hash=h,
-        hn_item_id=1,
+        ref=SourceRef("hackernews", h),
         url=f"https://e.com/{h}",
         title="t",
         collected_at=datetime.now(UTC) - timedelta(hours=hours_ago),
@@ -114,8 +116,14 @@ def test_dry_runの既定はFalse():
 # 立てる。「次回も同じ結果になる失敗」だけが非 0 になることを、ここで固定する。
 
 
-class _FakeHN:
-    """閾値を十分に超える現在値を返す HackerNews。反応は使わないので空で返す。"""
+class _FakeFeed:
+    """閾値を十分に超える現在値を返すソース。反応は使わないので空で返す。
+
+    `cli` は具象を知らず `create_feed` が返すものを使うだけなので、
+    テストもその口を差し替える（`StoryFeed` / `ReactionSource` を満たしていればよい）。
+    """
+
+    name = "fake"
 
     def __init__(self, **_kw) -> None:
         pass
@@ -126,14 +134,17 @@ class _FakeHN:
     def __exit__(self, *_a) -> bool:
         return False
 
-    def fetch_reactions(self, story_id: int) -> tuple[Story, list]:
+    def fetch_stories(self, **_kw) -> list[Story]:
+        return []
+
+    def fetch_reactions(self, ref: SourceRef) -> tuple[Story, list]:
         story = Story(
-            hn_item_id=story_id,
-            url=f"https://e.com/{story_id}",
+            ref=ref,
+            url=f"https://e.com/{ref.id}",
             title="t",
-            points=500,
-            num_comments=200,
+            engagement=Engagement(score=500, comments=200),
             created_at=datetime.now(UTC) - timedelta(hours=30),
+            discussion_url=f"https://news.ycombinator.com/item?id={ref.id}",
         )
         return story, []
 
@@ -224,7 +235,7 @@ def _compose_env(
     store = CandidateStore(tmp_path / "c.jsonl")
     store.append_new([_c(f"h{i}") for i in range(candidates)])
 
-    monkeypatch.setattr("imotech.cli.HackerNews", _FakeHN)
+    monkeypatch.setattr("imotech.cli.create_feed", lambda _names, **_kw: _FakeFeed())
     monkeypatch.setattr("imotech.cli.ArticleFetcher", _fake_fetcher_class(fetch_outcomes))
     monkeypatch.setattr("imotech.llm.DraftGenerator", _fake_generator_class(llm_outcomes))
 

@@ -3,10 +3,11 @@ title: "Google が公開したオープンソースのエージェント用オ�
 publishedAt: 2026-09-22T00:06:09+09:00
 sourceUrl: "https://agentexecutor.io"
 sourceTitle: "AX – Google’s Open Agentic Orchestrator"
-hnUrl: "https://news.ycombinator.com/item?id=49780797"
+source: "hackernews"
+discussionUrl: "https://news.ycombinator.com/item?id=49780797"
 hatenaUrl: "https://b.hatena.ne.jp/entry/s/agentexecutor.io"
-hnScore: 574
-hnComments: 261
+score: 574
+comments: 261
 tags: ["google", "ai", "agents", "kubernetes", "infrastructure"]
 model: "gemini-3.5-flash-lite"
 generatedAt: 2026-09-21T15:06:09+00:00

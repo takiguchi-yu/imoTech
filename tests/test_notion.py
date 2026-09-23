@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from imotech.models import ArticleDraft, DiscoursePoint, GlossaryEntry
+from imotech.models import ArticleDraft, DiscoursePoint, Engagement, GlossaryEntry
 from imotech.notion import (
     DATABASE_SCHEMA,
     MAX_CHILDREN_PER_REQUEST,
@@ -46,10 +46,9 @@ def _draft(**kw) -> ArticleDraft:
         tags=["rust", "async"],
         source_url="https://e.com/a",
         source_title="The Article",
-        hn_url="https://news.ycombinator.com/item?id=1",
+        discussion_url="https://news.ycombinator.com/item?id=1",
         hatena_url="https://b.hatena.ne.jp/entry/s/e.com/a",
-        hn_score=342,
-        hn_comments=187,
+        engagement=Engagement(score=342, comments=187),
         model="gemini-3.8-flash",
         generated_at=datetime(2026, 9, 22, 6, 12, tzinfo=UTC),
     )

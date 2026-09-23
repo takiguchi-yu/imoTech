@@ -3,10 +3,11 @@ title: "HF依存脱却目指すTorrent配布基盤が登場、持続性と認証
 publishedAt: 2026-09-22T12:23:51+09:00
 sourceUrl: "https://pirateface.co/"
 sourceTitle: "Pirate Face Rescues LLM Models from Deletion"
-hnUrl: "https://news.ycombinator.com/item?id=49776699"
+source: "hackernews"
+discussionUrl: "https://news.ycombinator.com/item?id=49776699"
 hatenaUrl: "https://b.hatena.ne.jp/entry/s/pirateface.co/"
-hnScore: 548
-hnComments: 130
+score: 548
+comments: 130
 tags: ["bittorrent", "ai", "p2p", "llm", "infrastructure"]
 model: "gemini-3.8-flash"
 generatedAt: 2026-09-22T03:23:51Z

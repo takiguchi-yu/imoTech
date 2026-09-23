@@ -5,7 +5,8 @@ Gemini の無料枠は入力が学習に使われ人間のレビュアーが読�
 """
 
 from imotech.anonymize import EMAIL_PLACEHOLDER, PLACEHOLDER, anonymize, strip_html
-from imotech.models import Reaction
+from imotech.models import Engagement, Reaction, SourceRef
+from imotech.sources.hackernews import PROFILE_URL_RE
 
 
 def _r(cid, author, text, depth=0, replies=0):
@@ -93,9 +94,14 @@ def test_通常のURLは温存する():
     assert "https://example.com/a/b?x=1" in out[0].text
 
 
-def test_HNのプロフィールURLは伏せる():
-    # スレッド参加者でないハンドルも載るので、handles 集合では捕まらない
-    out = anonymize([_r(1, "a", "see https://news.ycombinator.com/user?id=patio11")], limit=5)
+def test_プロフィールURLは伏せる():
+    # スレッド参加者でないハンドルも載るので、handles 集合では捕まらない。
+    # URL の形はソースごとに違うので、パターンはソース側（hackernews.PROFILE_URL_RE）が持つ
+    out = anonymize(
+        [_r(1, "a", "see https://news.ycombinator.com/user?id=patio11")],
+        limit=5,
+        profile_url_re=PROFILE_URL_RE,
+    )
     assert "patio11" not in out[0].text
     assert PLACEHOLDER in out[0].text
 
@@ -165,7 +171,13 @@ def test_build_user_promptが匿名化済みのURLを使う():
     from imotech.llm import build_user_prompt
     from imotech.models import AnonymizedReaction, ArticleSource, Story
 
-    story = Story(1, "https://buchodi.com/a", "T", 300, 90, datetime.now(UTC))
+    story = Story(
+        ref=SourceRef("hackernews", "1"),
+        url="https://buchodi.com/a",
+        title="T",
+        engagement=Engagement(score=300, comments=90),
+        created_at=datetime.now(UTC),
+    )
     p = build_user_prompt(
         story,
         ArticleSource("本文", "trafilatura"),

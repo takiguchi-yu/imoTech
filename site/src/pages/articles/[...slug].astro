@@ -2,6 +2,7 @@
 import { render } from "astro:content";
 import Base from "../../layouts/Base.astro";
 import { formatDate, publishedArticles } from "../../lib/articles";
+import { sourceLabel } from "../../lib/sources";
 
 export async function getStaticPaths() {
   // imo が書かれていない記事はここに載らない＝ページ自体が生成されない
@@ -21,7 +22,7 @@ const d = article.data;
   <article>
     <h1>{d.title}</h1>
     <p class="meta">
-      {formatDate(d.publishedAt)} ・ HN {d.hnScore} points / {d.hnComments} comments
+      {formatDate(d.publishedAt)} ・ {sourceLabel(d.source)} {d.score} points / {d.comments} comments
     </p>
     {
       d.tags.length > 0 && (
@@ -40,7 +41,7 @@ const d = article.data;
     <h2>出典</h2>
     <ul>
       <li>元記事: <a href={d.sourceUrl} rel="noopener">{d.sourceTitle}</a></li>
-      <li><a href={d.hnUrl} rel="noopener">Hacker News のスレッド</a></li>
+      <li><a href={d.discussionUrl} rel="noopener">{sourceLabel(d.source)} の議論</a></li>
       <li><a href={d.hatenaUrl} rel="noopener">はてなブックマークのコメント</a></li>
     </ul>
 

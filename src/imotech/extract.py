@@ -75,8 +75,12 @@ class ArticleFetcher:
         max_bytes: int = 5 * 1024 * 1024,
         max_chars: int = 8000,
         max_redirects: int = 5,
+        profile_url_re: re.Pattern[str] | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
+        # 投稿者のプロフィール URL は本文にも現れる。形はソースごとに違うので
+        # 呼び出し側から受け取る（`sources.profile_url_pattern` が取り出す）
+        self.profile_url_re = profile_url_re
         self.user_agent = user_agent
         self.max_bytes = max_bytes
         self.max_chars = max_chars
@@ -165,7 +169,8 @@ class ArticleFetcher:
 
     def _as_source(self, text: str, via: str) -> ArticleSource:
         # 元記事側にも PII は載る。実データでメールアドレスが残っていた。
-        return ArticleSource(text=scrub(text, frozenset())[: self.max_chars], via=via)
+        cleaned = scrub(text, frozenset(), self.profile_url_re)
+        return ArticleSource(text=cleaned[: self.max_chars], via=via)
 
     def _get(self, url: str) -> tuple[bytes, str] | None:
         """1 ホップずつリダイレクトを追い、各ホップで robots.txt と宛先 IP を検査する。"""

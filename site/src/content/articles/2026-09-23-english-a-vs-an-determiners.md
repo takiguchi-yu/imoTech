@@ -3,10 +3,11 @@ title: "英語の「a/an」判定の例外分析が話題、議論は冠詞の�
 publishedAt: 2026-09-23T08:37:18+09:00
 sourceUrl: "https://www.redblobgames.com/blog/2026-09-16-english-a-vs-an/"
 sourceTitle: "English: A vs. An"
-hnUrl: "https://news.ycombinator.com/item?id=49769944"
+source: "hackernews"
+discussionUrl: "https://news.ycombinator.com/item?id=49769944"
 hatenaUrl: "https://b.hatena.ne.jp/entry/s/www.redblobgames.com/blog/2026-09-16-english-a-vs-an/"
-hnScore: 358
-hnComments: 521
+score: 358
+comments: 521
 tags: ["linguistics", "english", "nlp", "programming"]
 model: "gemini-3.8-flash"
 generatedAt: 2026-09-22T23:37:18Z

@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from imotech.extract import ArticleFetcher, _decode, _host_is_public, _og_description
+from imotech.sources.hackernews import PROFILE_URL_RE
 
 # autouse fixture がモジュール属性を差し替えるので、本物への参照を先に掴んでおく
 _REAL_HOST_IS_PUBLIC = _host_is_public
@@ -27,6 +28,8 @@ def _allow_all_hosts(monkeypatch):
 
 
 def _fetcher(handler, **kw):
+    # 投稿者プロフィールの URL パターンはソースが持つ。本文の匿名化に使うので渡す
+    kw.setdefault("profile_url_re", PROFILE_URL_RE)
     return ArticleFetcher(user_agent=UA, transport=httpx.MockTransport(handler), **kw)
 
 

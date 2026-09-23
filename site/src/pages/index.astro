@@ -1,6 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import { allTags, formatDate, publishedArticles } from "../lib/articles";
+import { sourceLabel } from "../lib/sources";
 
 const articles = await publishedArticles();
 const tags = allTags(articles);
@@ -8,10 +9,10 @@ const tags = allTags(articles);
 
 <Base
   title="imoTech"
-  description="Hacker News で議論を呼んだ記事を、元記事の要旨と議論の論調、そして運営者の imo とともに日本語で紹介します。"
+  description="英語圏のテックコミュニティで議論を呼んだ記事を、元記事の要旨と議論の論調、そして運営者の imo とともに日本語で紹介します。"
 >
   <p>
-    Hacker News で議論を呼んだ英語圏のテック記事を、<strong>元記事の要旨</strong>・<strong
+    テックコミュニティで議論を呼んだ記事を、<strong>元記事の要旨</strong>・<strong
       >議論の論調</strong
     >・<strong>imo（運営者の所感）</strong>の 3 つで紹介しています。
   </p>
@@ -39,8 +40,8 @@ const tags = allTags(articles);
               <a href={`/articles/${a.id}/`}>{a.data.title}</a>
             </h2>
             <p class="meta">
-              {formatDate(a.data.publishedAt)} ・ HN {a.data.hnScore} points /{" "}
-              {a.data.hnComments} comments
+              {formatDate(a.data.publishedAt)} ・ {sourceLabel(a.data.source)} {a.data.score} points /{" "}
+              {a.data.comments} comments
             </p>
           </li>
         ))}

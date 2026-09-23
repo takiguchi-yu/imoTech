@@ -2,14 +2,14 @@
 
 from datetime import UTC, datetime
 
-from imotech.models import Candidate, CandidateState
+from imotech.models import Candidate, CandidateState, SourceRef
 from imotech.store import CandidateStore
 
 
 def _c(h: str, state=CandidateState.PENDING) -> Candidate:
     return Candidate(
         url_hash=h,
-        hn_item_id=int(h, 16) if all(x in "0123456789abcdef" for x in h) else 1,
+        ref=SourceRef("hackernews", h),
         url=f"https://e.com/{h}",
         title=f"title {h}",
         collected_at=datetime(2026, 9, 21, tzinfo=UTC),

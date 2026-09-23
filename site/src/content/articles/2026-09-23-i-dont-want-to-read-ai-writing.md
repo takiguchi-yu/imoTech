@@ -3,10 +3,11 @@ title: "AI生成文章を読む苦痛を訴える記事が登場、HNでは情�
 publishedAt: 2026-09-23T12:34:31+09:00
 sourceUrl: "https://blog.colinbreck.com/i-dont-want-to-read-what-you-didnt-write/"
 sourceTitle: "I don't want to read what you didn't write"
-hnUrl: "https://news.ycombinator.com/item?id=49794330"
+source: "hackernews"
+discussionUrl: "https://news.ycombinator.com/item?id=49794330"
 hatenaUrl: "https://b.hatena.ne.jp/entry/s/blog.colinbreck.com/i-dont-want-to-read-what-you-didnt-write/"
-hnScore: 998
-hnComments: 427
+score: 998
+comments: 427
 tags: ["ai", "llm", "productivity", "writing"]
 model: "gemini-3.7-flash"
 generatedAt: 2026-09-23T03:34:31Z

@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     notion_database_id: str = ""
 
     # --- 収集 ---
+    # 使うソース。カンマ区切りで複数指定できる（例: "hackernews,qiita"）。
+    # 2 つ以上なら sources.registry が MultiFeed で束ねるので、呼び出し側は
+    # 1 つか複数かを意識しない
+    sources: str = Field(default="hackernews", validation_alias="IMOTECH_SOURCES")
     collect_window_hours: int = Field(default=24, validation_alias="IMOTECH_COLLECT_WINDOW_HOURS")
     collect_min_score: int = Field(default=10, validation_alias="IMOTECH_COLLECT_MIN_SCORE")
     collect_hits_per_page: int = Field(default=50, validation_alias="IMOTECH_COLLECT_HITS")
@@ -92,6 +96,11 @@ class Settings(BaseSettings):
         default=REPO_ROOT / "site" / "src" / "content" / "articles",
         validation_alias="IMOTECH_ARTICLES_DIR",
     )
+
+    @property
+    def source_names(self) -> list[str]:
+        """使うソースの名前。空白を落としてリストにする。"""
+        return [n.strip() for n in self.sources.split(",") if n.strip()]
 
     @property
     def notion_enabled(self) -> bool:
