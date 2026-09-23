@@ -72,7 +72,8 @@ export function metaLine(card: Pick<OgCard, "source" | "score" | "comments">): s
  * 1 行に入る字数の端数や「英単語は途中で折り返さない」ことで実際の行数とずれ、
  * 既存記事の 1 本（52 字）が 3 行の見込みで 4 行になっていた。
  *
- * 記事タイトルは 40〜60 字の指示だが（`src/imotech/prompts/compose.md`）、超えることがある。
+ * 記事タイトルは幅 40 まで（全角 1・半角 0.5）の指示だが（`src/imotech/prompts/compose.md`）、超えることがあり、
+ * 2026-09-23 より前の記事は 40〜60 字の旧形式。
  * 小さい字で押し込むより、読める大きさで 3 行に収めるほうを優先し、
  * 収まらなければ最小の字で 4 行まで出して残りは省略する。 */
 export async function chooseTitleFontSize(

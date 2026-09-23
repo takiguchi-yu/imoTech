@@ -818,3 +818,75 @@ def test_imoを差し込んだ後でも但し書きを補える():
     restored = ensure_use_case_note(_without_note(md))
     assert USE_CASE_NOTE in restored
     assert imo_of(restored) == "所感です。"
+
+
+# --- タイトルの検査（prompts/compose.md の title の指示） -------------------
+
+
+def test_タイトルの幅は全角1半角0点5で数える():
+    from imotech.render import title_width
+
+    assert title_width("あいう") == 3
+    assert title_width("AX") == 1
+    assert title_width("Google、「AX」を公開") == 3 + 1 + 1 + 1 + 1 + 3
+
+
+def test_上限内の事実型タイトルは問題なし():
+    from imotech.render import title_problems
+
+    assert (
+        title_problems(
+            "Acme、ベクトル DB「Quill」をオープンソースで公開　ベンチマークの条件に疑問の声"
+        )
+        == []
+    )
+
+
+def test_長すぎるタイトルを知らせる():
+    from imotech.render import TITLE_MAX_WIDTH, title_problems
+
+    got = title_problems("あ" * (TITLE_MAX_WIDTH + 1))
+    assert len(got) == 1 and "上限" in got[0]
+
+
+def test_定型句と記号を知らせる():
+    from imotech.render import title_problems
+
+    got = [p for p in title_problems("【悲報】記事が登場、HN では議論に？") if "使わない語" in p]
+    assert len(got) == 1
+    for w in ("【", "記事が登場", "HN では", "議論", "？"):
+        assert w in got[0]
+
+
+def test_短すぎるタイトルを知らせる():
+    from imotech.render import TITLE_MIN_WIDTH, title_problems
+
+    got = title_problems("あ" * (TITLE_MIN_WIDTH - 1))
+    assert len(got) == 1 and "下限" in got[0]
+
+
+def _prompt_title_section() -> str:
+    from imotech.llm import PROMPT_PATH
+
+    text = PROMPT_PATH.read_text(encoding="utf-8")
+    return text[text.index("- `title`:") : text.index("- `slug_hint`:")]
+
+
+def test_プロンプトの幅の指示と検査の範囲が一致する():
+    from imotech.render import TITLE_MAX_WIDTH, TITLE_MIN_WIDTH
+
+    assert f"幅 {TITLE_MIN_WIDTH}〜{TITLE_MAX_WIDTH}" in _prompt_title_section()
+
+
+def test_プロンプトの良い例はすべて検査を通る():
+    # モデルは例の長さに引っ張られる。手本が自分の規則を破っていてはいけない
+    import re
+
+    from imotech.render import title_problems
+
+    section = _prompt_title_section()
+    good = section[section.index("良い例") : section.index("悪い例")]
+    examples = re.findall(r"「((?:[^「」]|「[^「」]*」)+)」", good)
+    assert len(examples) >= 3
+    for t in examples:
+        assert title_problems(t) == [], t

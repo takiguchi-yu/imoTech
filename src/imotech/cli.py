@@ -42,6 +42,7 @@ from .render import (
     imo_section_text,
     load_article,
     set_imo,
+    title_problems,
     write_article,
 )
 from .sources import opened, profile_url_patterns, supports_reactions, thresholds_for
@@ -405,6 +406,19 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
                 continue
             rel = path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path
             _p(f"    → {rel}" if created else f"    → {rel} は既にあるので上書きしません")
+            if created:
+                for problem in title_problems(result.draft.title):
+                    # 書き出しは止めない。直すのは記事 Markdown の title（Notion の Title は
+                    # 読み戻さないので、Notion で直しても公開記事には効かない）。
+                    # `::warning file=...::` は GitHub Actions の注釈の書式で、実行の概要に出る
+                    # （緑のジョブのログに埋もれない）。ローカルでもそのまま読める
+                    _p(
+                        # 注釈は 1 行で終わる。改行が入ると以降が落ちるので空白にする
+                        f"::warning file={rel}::タイトル「{' '.join(result.draft.title.split())}」: "
+                        f"{problem}"
+                        "（記事 Markdown の title を直してください）",
+                        err=True,
+                    )
             if not created:
                 _p("      （この記事の生成結果は破棄しました。次回は生成しません）")
             # Notion が設定されていればレビュー面としても投入する。

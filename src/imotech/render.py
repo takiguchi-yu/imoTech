@@ -50,6 +50,43 @@ _YAML_SIMPLE_ESCAPES = {
 }
 
 
+#: タイトルの幅の範囲（全角 1・半角 0.5）。prompts/compose.md の title の指示と一致させる
+#: （一致は tests/test_render.py が確かめる）
+TITLE_MIN_WIDTH = 25
+TITLE_MAX_WIDTH = 40
+
+#: タイトルに入れない定型句と記号（prompts/compose.md の title の指示）。
+#: どの記事にも付いて中身を伝えないか、答えを伏せる・煽る書き方になる
+TITLE_BANNED = ("議論", "HNでは", "HN では", "記事が登場", "？", "?", "【", "】")
+
+
+def title_width(title: str) -> float:
+    """タイトルの幅。全角（East Asian Width が W / F）を 1、それ以外を 0.5 と数える。"""
+    return sum(1.0 if unicodedata.east_asian_width(ch) in ("W", "F") else 0.5 for ch in title)
+
+
+def title_problems(title: str) -> list[str]:
+    """タイトルが指示から外れている点。**書き出しは止めない**（知らせるだけ）。
+
+    生成 AI は長さや禁止語の指示を守りきらない。止めると記事が 1 本も出なくなるので、
+    compose のログに警告を出し、人が記事の Markdown の title を直せるようにする。
+
+    **見るのは幅と、決まった語・記号だけ。** 「様々な見方」のような曖昧さや、主体と行為で
+    始まっているかは機械では判定しない。「議論」は部分一致で見るので、事実の側の語
+    （「国会で議論が続く法案」）でも警告が出る（知らせるだけなので許容する）。
+    """
+    problems = []
+    width = title_width(title)
+    if width > TITLE_MAX_WIDTH:
+        problems.append(f"幅 {width:g} で上限 {TITLE_MAX_WIDTH} を超えています")
+    elif width < TITLE_MIN_WIDTH:
+        problems.append(f"幅 {width:g} で下限 {TITLE_MIN_WIDTH} に足りません")
+    found = [w for w in TITLE_BANNED if w in title]
+    if found:
+        problems.append(f"使わない語・記号が入っています: {'、'.join(found)}")
+    return problems
+
+
 def _yaml_str(s: str) -> str:
     """YAML のダブルクォート文字列にする。
 

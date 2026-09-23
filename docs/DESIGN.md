@@ -354,13 +354,37 @@ URL: {url}
 
 | フィールド | 制約 |
 |---|---|
-| `title` | 日本語、40〜60 文字。事実 + 争点を含める。`【】` と感情語を使わない |
+| `title` | 日本語、**幅 25〜40**（全角 1・半角 0.5）。**事実を前に出す**（主体と行為で始め、先頭の幅 20 で核が分かる）。元記事の数字があれば入れる。争点は具体語で短く（反応が無ければ書かない）。「議論」「HN では」「記事が登場」、疑問符、`【】`、煽り語を使わない。答えを伏せない。反応の言葉は引用しない。幅が範囲外か決まった語・記号が入っていたら、`compose` が GitHub Actions の注釈（`::warning file=<記事>::`）を出す（`render.title_problems`。書き出しは止めない。曖昧さや語順は機械では見ない）。根拠は下の「タイトルの書き方」 |
 | `slug_hint` | 英小文字・数字・ハイフンのみ。最終 slug は `YYYY-MM-DD-<slug_hint>` |
 | `digest` | 3〜5 要素、各 60〜120 文字 |
 | `discourse` | 2〜4 要素。`stance` は `supportive` \| `critical` \| `mixed` |
 | `tags` | 2〜5 要素、英小文字 |
 | `glossary` | **0〜5 要素**。`term` は記事に出てくる語（**分野は問わない**）、`description` は 30〜80 文字。`required` に入れず `minItems` も置かない — 用語が要らない記事で数を埋めさせないため |
 | `use_cases` | **0〜3 要素**。`scene` は誰が何をしようとしているかが分かる場面（20〜40 文字）、`detail` は何にどう効くか（60〜120 文字）。`glossary` と同じく `required` にも `minItems` にも入れない |
+
+**タイトルの書き方（2026-09-23 に改めた。それ以前の 12 本は 40〜60 字の旧形式のまま）**
+
+「クリックされるような魅力的なタイトルになっていない」を受けて、よく読まれている日本語のテックサイトの実タイトルと、
+見出しのガイドラインを調べて決めた。方向性（事実を前に出す型。まとめサイト型の煽りは採らない）はユーザーの判断。
+
+| 決めたこと | 根拠 |
+|---|---|
+| 主体と行為で始める（「Google、〜を公開」） | ITmedia NEWS・Publickey の実タイトルの形（例: 「Anthropic、「Claude Opus 5.5」公開　…利用コスト4割減」）。Yahoo!ニュースの見出しの作法「大事なことを前に」（<https://news.yahoo.co.jp/newshack/inside/yahoonews_topics_heading.html>） |
+| 幅 25〜40、先頭の幅 20 で核 | 調べた 9 サイトの中央値は 20〜56 字（多くは 28〜41 字）。Google は検索結果での表示字数を公式には示さず、デバイス幅で切る（<https://developers.google.com/search/docs/appearance/title-link>）ので、前に核を置く |
+| 数字を入れる（作らない） | Chartbeat の見出しテスト（約 10 万件）で数字・what/where・引用が効き、疑問符は逆効果（<https://chartbeat.com/resources/research/infographics-the-enhanced-art-of-writing-headlines/>、ベンダーの自社データ） |
+| 「議論」「HN では」の定型をやめる | 集めた 90 本余りに「議論」で終わるものは 0 本。どの記事にも付く定型句は Google がタイトルを書き換える理由になる（title-link のガイド） |
+| 答えを伏せない・盛らない・煽らない | Google Discover（誇張と重要な情報を隠すことを避ける <https://developers.google.com/search/docs/appearance/google-discover>）、Meta（Withholding と Exaggerating を釣りとして配信を減らす <https://about.fb.com/news/2017/05/news-feed-fyi-new-updates-to-reduce-clickbait-headlines/>）、Yahoo!ニュース（煽り文句・海外を国内と誤解させる見出しを禁止 <https://news.yahoo.co.jp/info/articles-guidelines>） |
+| 反応の言葉は引用しない | 既存の規則（反応の原文を引用しない、投稿者を特定しうる記述をしない）。@IT のような「生の声」の引用は、元記事の言葉に限る |
+
+プロンプトの良い例・悪い例は**架空の社名・製品名・数字**にしてある。実在の記事を例にすると、同じ題材の記事で
+例をそのまま写す（試し生成で起きた）うえ、例の数字が関係の無い記事に持ち込まれうる。
+
+**生成 AI は長さの指示を守りきらない**（試し生成で幅 46 が出た）。止めると記事が 1 本も出なくなるので、
+`compose` は外れたタイトルを注釈で知らせるだけにし、**人が記事 Markdown の title を直す**
+（Notion の Title は読み戻さないので、Notion で直しても公開記事には効かない）。
+
+**確かめていないこと:** 新しい形が実際にクリックされやすいかは測っていない（A/B テストの仕組みが無い）。
+
 
 #### `use_cases` だけは「元記事に書かれていないこと」を含む
 
