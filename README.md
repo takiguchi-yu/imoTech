@@ -1,6 +1,6 @@
 # imoTech
 
-Hacker News をはじめとする英語圏のテックコミュニティで議論を呼んだ記事を、**元記事の要旨 + 議論の論調 + imo（運営者の所感）** として日本語で公開するキュレーションメディアの自動化パイプライン。
+Hacker News や Qiita で話題になった技術記事を、**元記事の要旨 + 議論の論調 + imo（運営者の所感）** として日本語で公開するキュレーションメディアの自動化パイプライン。
 
 収集から下書き生成までは全自動で、**公開の可否は人間だけが決める**。
 
@@ -307,8 +307,8 @@ IMOTECH_CANDIDATES_PATH=/tmp/try.jsonl \
 | **記事の形** | 反応が 0 件の記事は**議論の論調の節を持たない**（要旨 + imo + 用語になる） |
 | **未対応** | アクセストークンによる 1000 req/h への引き上げは、`Qiita(token=...)` まで実装済みだが**設定から渡す配線がまだ無い** |
 
-**サイトの自己紹介文は「英語圏」のまま**（[`site/src/pages/about.astro`](./site/src/pages/about.astro) ほか）。
-Qiita を本番で有効にするなら、読者向けの説明も併せて直すこと。
+**Qiita は本番で有効にしてある**（`daily.yml` の `IMOTECH_SOURCES: hackernews,qiita`）。
+非認証の 60 req/h に収めるため `IMOTECH_MAX_PROBES_PER_RUN` は 40 に下げてある。
 
 ### Secrets の登録
 

@@ -31,13 +31,14 @@ jobs:
     # 状態になって、エラーも出ないまま毎日 0 本になる
     env:
       # 使えるのは hackernews と qiita（src/imotech/sources/registry.py）。
-      # 増やすときはここを "hackernews,qiita" にする（ここ 1 箇所でよい）
-      IMOTECH_SOURCES: hackernews
+      # 増減させるときはここ 1 箇所でよい（collect と compose の両方に効く）
+      IMOTECH_SOURCES: hackernews,qiita
       # 1 回の実行でソースに問い合わせる候補の上限。
-      # **qiita を足すときは 40 以下に下げること** — Qiita は非認証で 60 req/h/IP、
+      # **qiita を含むので 40 に下げてある** — Qiita は非認証で 60 req/h/IP、
       # collect の検索（最大 3 ページ）と compose の問い合わせが同じ枠を食う。
-      # しかも Actions の IP は他の利用者と共有する
-      IMOTECH_MAX_PROBES_PER_RUN: "60"
+      # しかも Actions の IP は他の利用者と共有する。
+      # 枯れても候補は pending のまま次回に回るので、実行が壊れることはない
+      IMOTECH_MAX_PROBES_PER_RUN: "40"
     steps:
       - uses: actions/checkout@v4
         with:

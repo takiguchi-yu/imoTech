@@ -106,13 +106,16 @@ Qiita のコメントで論調が作れないなら、同じ技術の議論を�
 
 ## 申し送り
 
-- **本番ではまだ有効にしていない。** `IMOTECH_SOURCES` の既定は `hackernews` のまま。
-  切り替えるときは `IMOTECH_SOURCES=hackernews,qiita` を Actions の env に足す
-- **非認証の 60 req/h が実運用の天井。** `IMOTECH_MAX_PROBES_PER_RUN=60` と合わせると
-  ちょうど使い切る。実際に検証中に使い切って 403 が多発した（そのための打ち切りを実装済み）。
-  **GitHub Actions の IP は共有**なので、他の利用者と競合する可能性もある。
-  常用するなら Qiita のアクセストークンを発行して 1000 req/h にするのが素直
-  （`Qiita(token=...)` は実装済みだが、**トークンを設定から渡す配線はまだ無い**）
+- **本番で有効にした**（2026-09-23）。`daily.yml` の `jobs.pipeline.env` を
+  `IMOTECH_SOURCES: hackernews,qiita` / `IMOTECH_MAX_PROBES_PER_RUN: "40"` にした。
+  **翌朝 06:17 JST の cron から Qiita の候補が入る。** 最初の数日は
+  `uv run imotech stats` でソース別の分布を見て、閾値（既定は LGTM 30）を調整する
+- **非認証の 60 req/h が実運用の天井。** `IMOTECH_MAX_PROBES_PER_RUN` を 40 に下げて
+  収まるようにしたが、**GitHub Actions の IP は共有**なので他の利用者と競合しうる。
+  枯れても候補は pending のまま次回に回るので壊れないが、毎日枯れるようなら
+  Qiita のアクセストークンを発行して 1000 req/h にするのが素直
+  （`Qiita(token=...)` は実装済みだが、**トークンを設定から渡す配線はまだ無い**）。
+  **本番で有効にした翌日以降、ログに `レート上限` が出ていないかを見ること**
 - **Qiita 記事の「質」は未検証。** dry-run でプロンプトまでは確認したが、実際に Gemini に
   投げて記事を作ってはいない。論調の無い記事が読み物として成立するかは、1 本作ってみないと分からない
 - **Bluesky は測っていない。** 論調を補える可能性は残っているが、app password の発行が要る。
@@ -258,3 +261,23 @@ URL: https://qiita.com/[ユーザー名]/items/7306e0b1a9207e08d86e   ← 著者
 **残る仕様上の判断**: 公開される Markdown の `sourceUrl` / `discussionUrl` / `hatenaUrl` には
 **著者のハンドルが入る**（`qiita.com/<user_id>/items/<id>`）。これは出典として必要な
 リンクであり、消すと引用元が辿れなくなるため残している。LLM への入力からは伏せている。
+
+## 本番で有効にした（2026-09-23）
+
+`daily.yml` の `jobs.pipeline.env` を `IMOTECH_SOURCES: hackernews,qiita` /
+`IMOTECH_MAX_PROBES_PER_RUN: "40"` に変更。あわせて**サイトの自己定義から「英語圏」を外した** —
+Qiita 記事が並んだ瞬間に「英語圏のテックコミュニティ」が嘘になり、
+「英文の議論を追いきれない読者に向けて」という価値の置き方も当てはまらなくなるため。
+
+| 前 | 後 |
+|---|---|
+| Hacker News をはじめとする**英語圏のテックコミュニティ**で議論を呼んだ記事 | Hacker News や Qiita で話題になった技術記事 |
+| **英文の議論**を追いきれない読者に向けて | 元記事も議論も**全部は追いきれない**読者に向けて |
+
+対象: `index.astro` / `about.astro` / `Base.astro` / `rss.xml.ts` / `README.md` / `CONTEXT.md` / `docs/DESIGN.md`。
+
+**翌朝以降に見ること**
+
+- `uv run imotech stats` のソース別の分布（Qiita の LGTM が閾値 30 に対してどう出るか）
+- `daily.yml` のログに `レート上限` が出ていないか
+- 出てきた Qiita 記事の質（論調の無い記事が続くので、要旨と用語だけで読ませられるか）
