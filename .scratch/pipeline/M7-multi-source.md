@@ -2,7 +2,7 @@
 
 Hacker News だけに結合している収集層・モデル・表示層を、**ソースを足すだけで増やせる形**に作り替える。
 
-**Status:** 完了（完了条件 28 件のうち 25 件を充足。3 件は条件を改訂または別チケットに切った — 末尾参照）
+**Status:** 完了（`ct-verifier` で 28 件を機械検証し ✅ 27 / ❌ 1。❌ の 1 件は Notion のプロパティ名で、別チケットに切った — 末尾参照）
 **Blocked by:** なし（M1〜M6 が完了していれば動く）
 
 ## なぜやるか
@@ -78,6 +78,11 @@ HN との違いが設計に効く。
 ### 表示と匿名化
 - [x] `anonymize.py` の `news.ycombinator.com/user?id=` のハードコードをソース側に移した
 - [x] サイトの「Hacker News」固定の文言をソース非依存にした（`[...slug].astro` / `about.astro` / `index.astro` / `Base.astro`）
+      **検証で取り残しが 1 件見つかり、直した。** `about.astro:13` だけ「Hacker News で議論を呼んだ
+      英語圏のテック記事」のままだった（チェックは入っていたが実態が伴っていなかった）。
+      ついでに `README.md:3` と `CONTEXT.md:3` も同じ取り残しだったので統一し、
+      自己定義を**「Hacker News をはじめとする英語圏のテックコミュニティ」の 1 通りに揃えた**
+      （`Base.astro:32` / `index.astro:12,15` / `rss.xml.ts:11` / `about.astro:13` / `README.md:3` / `CONTEXT.md:3`）
 - [ ] Notion のプロパティ名を新しい形に合わせた
       **未達。** `PROP_HN_URL = "HN URL"` などの**表示名は据え置いた**。既存 DB の 14 ページと
       整合させるほうを優先している（`notion-setup --dry-run` で差分 0 を実測）。
@@ -167,7 +172,7 @@ MultiFeed([...]) : ハンドル残存 = False   （直す前は True）
   `hn_item_id` がファイルから消える（前進移行）。**commit だけ revert すると全 298 行で `KeyError` に
   なりパイプラインが止まる。** 戻すときは `data/candidates.jsonl` も同じコミットまで戻すこと
 - **Notion のプロパティ名（`HN URL` など）は据え置き。** HN 以外のソースを足すとラベルが実態と
-  ずれる。リネームは既存 14 ページの移行を伴うので別チケットに切る
+  ずれる。リネームは既存 14 ページの移行を伴うので `M8-notion-props.md` に切った
 - **`limit` の意味が経路で違う。** `HackerNews` は `max_pages=5` まで追うので最大 5×limit 件返すが、
   `MultiFeed` は結合後に `limit` で切る。ソースを 1 つ足すと HN の収集件数が減る
 - **`Candidate.discussion_url` は書き込み専用**。記事に出る議論 URL は `story.discussion_url` から
@@ -175,3 +180,48 @@ MultiFeed([...]) : ハンドル残存 = False   （直す前は True）
 - **dev.to は規約に「commercial purpose」の禁止がある**（はてブ・Reddit と同じ懸念）。
   Zenn は公式 API が無く第 6 条 3 項に無断転載の禁止がある。Qiita が最も素直。
   **どれを実際に足すかは、この設計とは別に決める**
+
+## 検証（2026-09-23）
+
+`ct-verifier` に完了条件 28 件を 1 件ずつ渡し、**チェック済みかどうかを根拠にせず**実行で判定させた。
+
+| | 件数 |
+|---|---|
+| ✅ 充足 | 27 |
+| ❌ 未充足 | 1（Notion のプロパティ名 — 別チケット） |
+| ⚠️ 機械検証不能 | 0 |
+
+**検証で見つかって直したもの**
+
+- `about.astro:13` の説明文が旧文言のまま取り残されていた。**チェックが入っているのに実態が
+  伴っていなかった 1 件**。同じ取り残しが `README.md:3` / `CONTEXT.md:3` にもあったので合わせて直した
+
+**PII の回帰確認（レビューで直した最重要の指摘）**
+
+束ねたソースで投稿者ハンドルの伏せ字がスキップされる不具合が直っていることを、実行で確かめた。
+
+```
+単一 ハンドル残存 = False
+束ね ハンドル残存 = False
+```
+
+`scrub` / `scrub_title` / `anonymize` は `profile_url_res` を省くと `TypeError` になる
+（渡し忘れが静かに PII を残さない）。`anonymize.py` に `news.ycombinator.com` のハードコードは無い。
+
+**実測（すべて再実行可能）**
+
+| 検査 | 結果 |
+|---|---|
+| `uv run ruff format --check . && uv run ruff check .` | 57 files already formatted / 指摘なし |
+| `uv run pytest -q` | 355 passed |
+| `cd site && npm test` | tests 17 / pass 17 |
+| `npm run build` | 8 page(s) built |
+| `node scripts/check-unpublished.mjs` | 記事 12 件（imo 未記入 11 件）／出力への漏れなし |
+| `data/candidates.jsonl` 298 行の load→save→load | 298 行一致、本番ファイルは無変更 |
+| `IMOTECH_SOURCES=nosuchsource uv run imotech collect` | 1 行のメッセージ + exit 2（トレースバックなし） |
+| `grep -n "hackernews\|HackerNews" src/imotech/cli.py` | 0 件 |
+| `grep -l "hnUrl:\|hnScore:\|hnComments:" site/src/content/articles/*.md` | 0 件 |
+| GitHub Actions CI（`4e8d781`） | サイト・パイプラインとも success |
+
+Composite の挙動も実行で確かめた — 全ソース失敗で `RuntimeError`、同名ソースは `dict.fromkeys` で
+重複排除、`supports_reactions` は子を再帰的に見る、`opened()` は `close()` を持たないソースでも動く。
