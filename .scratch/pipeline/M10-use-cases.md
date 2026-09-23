@@ -121,7 +121,7 @@ Markdown の行の正規表現だけは共用した（`_LABELED_LINE_RE`）。
 
 ## レビューで直したもの（2026-09-23）
 
-2 視点（正確性 / リスク）で並列にレビューした。**Blocker 0 / Major 3 / Minor 9**。
+2 視点（正確性 / リスク）で並列にレビューした。**Blocker 0 / Major 3 / Minor 10**。
 Major と Minor をすべて直した。
 
 ### Major
@@ -157,3 +157,54 @@ Notion の但し書きの位置 / `ensure_use_case_note` / 件数と長さの上
 - **`digest` / `discourse` に推測が漏れていないか**は、実データ 4 本を読んだ限り**見つからなかった**が、
   n=4・モデル 3 種でしかない。「例外は `use_cases` だけ」がモデル横断で守られる保証は無く、
   定量的な判定手段も現状ない。**継続して観察するしかない**
+
+## 検証（2026-09-23、コミット `a372f12`）
+
+`ct-verifier` に完了条件 28 件を 1 件ずつ渡し、**チェック済みかどうかを根拠にせず**実行で判定させた。
+
+| | 件数 |
+|---|---|
+| ✅ 充足 | 27 |
+| ⚠️ 機械検証不能 | 1（実データでの生成 — API キーが要る行為で、記録済みの結果を再現する手段がない） |
+| ❌ 未充足 | 0 |
+
+**開示の経路（最優先）**
+
+| 検査 | 結果 |
+|---|---|
+| 記事ページの開示文が節を名指しで列挙していない | ✅ ビルド後の HTML で確認 |
+| `about.astro` の開示表に行 + 補足 | ✅ |
+| 但し書きを手で消した Markdown が公開経路で復元される | ✅ `消した: True` / `戻る: True` |
+| `cmd_publish` が `ensure_use_case_note` を通す | ✅ `cli.py:734` |
+| Notion で但し書きが項目より前 | ✅ |
+| **RSS に記事本文が入らない** | ✅ `description` はメタデータのみ。但し書き無しで配信される経路は無い |
+
+**「例外は use_cases だけ」が閉じているか**
+
+- 「守ること」4・6 とも `use_cases` に限定し、6 は「他のすべてのフィールド」で漏れなく閉じている
+- `title` の指示・ルール 7 と矛盾しない
+- 但し書きの全文リテラルは `render.USE_CASE_NOTE` の 1 か所だけ（`compose.md` / `DESIGN.md` に重複なし）
+
+**件数と長さの上限**（実行結果）
+
+```
+10 件渡す → 3 件（MAX_USE_CASES）/ 用語は 5 件（MAX_GLOSSARY）
+detail 3000 字 → [] （捨てる）
+scene "A**: B" → UseCase(scene='A: B', ...) （* を落とす）
+```
+
+**テストの検出力**: 3 箇所を壊して **6 件が落ちる**ことを検証役も再現した。
+
+**その他**
+
+| 検査 | 結果 |
+|---|---|
+| `uv run ruff format --check . && uv run ruff check .` | 62 files already formatted / 指摘なし |
+| `uv run pytest -q` | 478 passed |
+| `cd site && npm test` | 22 tests / 0 fail |
+| `npm run build` / `check-unpublished.mjs` | 8 page(s) built / 漏れなし |
+| 既存記事 12 件が `load_article` を通る | ✅ 12/12、`use_cases == []` |
+| 本番データが無変更 | ✅ `git status --porcelain` クリーン |
+| GitHub Actions CI（`a372f12`） | サイト・パイプラインとも success |
+
+**検証で指摘されて直したもの**: この節の Minor の集計が「9」と書かれていたが、表の実件数は 10 だった。
