@@ -568,7 +568,6 @@ Notion の内容を消しても、公開済みの記事は影響を受けない�
 | `Source` | Select | 選択肢は書かない（下記） | パイプライン | 話題を拾ったソース（`hackernews` / `qiita` …）。`sources/registry.py` の名前 |
 | `Source URL` | URL | — | パイプライン | 元記事 |
 | `Discussion URL` | URL | — | パイプライン | 話題を拾ったソースでの議論（HN のスレッド、Qiita の記事） |
-| `Hatena URL` | URL | — | パイプライン | はてブのコメントページ（リンクのみ） |
 | `Score` | Number | 整数 | パイプライン | 熟成判定時の注目度（HN は points、Qiita は LGTM。単位は `Source` で読む） |
 | `Comments` | Number | 整数 | パイプライン | 熟成判定時のコメント数 |
 | `Tags` | Multi-select | — | パイプライン | タグ |
@@ -598,6 +597,20 @@ added to the data source schema」— [page-property-values](https://developers.
 
 **戻すとき:** コードを戻す前に、Notion の UI で列名を旧名に戻す。先にコードだけ戻すと、旧コードの
 `notion-setup` は旧名の列が無いと判断して空の列を足し、値が 2 つの列に分かれる。
+
+**列にするのは、絞り込み・並べ替えに使うか、パイプラインが読み戻す値だけ。** 他の値から作れるものや、
+ページ本文を開けば分かるものは列にしない。`Hatena URL` はこれで外した（`Source URL` から API なしで作れ —
+`links.py` の `hatena_bookmark_url` — ページ本文の出典にも同じリンクがあり、読み戻す処理も無い）。
+はてブのリンクはページ本文と、公開記事（Markdown の `hatenaUrl`）には引き続き出る。
+
+**廃止した列は `notion-setup` が消さない。** `notion.py` の `RETIRED_PROPS` に載せ、既存の DB に残っていれば
+名指しで知らせる。残しても動作に影響は無い（新しいページで空欄になるだけ）。消すかどうか・いつ消すかは人が決める。
+**消すのは、廃止した版が main に push 済みで、実行中の daily.yml が無くなってから。** 先に消すと、
+古いコードの `compose` がその列に書こうとして Notion への投入が失敗する。
+
+**廃止を戻すとき:** README の「コードを更新したら」の順（push したら次の `daily.yml` より前に `notion-setup`）で、
+空の列が足される。既存ページの値は埋まらない。埋める仕組みは無いが、`Source URL` から作れる
+（`links.py` の `hatena_bookmark_url`）うえ、ページ本文の出典に同じリンクがあるので、埋めなくても困らない。
 
 **`Status` を Notion の Status 型ではなく Select 型にする理由**: Status 型のオプションは API から作成できず、Notion の UI で手作業になる。Select 型なら DB 作成スクリプトで完結し、環境の再現性が取れる。グループ機能（To-do / In progress / Complete）は今回の 4 状態には不要。
 
@@ -658,7 +671,7 @@ divider
 heading_2 出典
 bulleted_list_item 元記事: <Source URL>
 bulleted_list_item 議論: <Discussion URL>
-bulleted_list_item はてなブックマーク: <Hatena URL>
+bulleted_list_item はてなブックマーク: <はてブのコメントページ（Source URL から組み立てる）>
 paragraph 生成モデル: <model> / 生成日時: <generatedAt>
 ```
 

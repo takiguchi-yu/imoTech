@@ -50,7 +50,6 @@ PROP_SLUG = "Slug"
 PROP_SOURCE = "Source"
 PROP_SOURCE_URL = "Source URL"
 PROP_DISCUSSION_URL = "Discussion URL"
-PROP_HATENA_URL = "Hatena URL"
 PROP_SCORE = "Score"
 PROP_COMMENTS = "Comments"
 PROP_TAGS = "Tags"
@@ -191,7 +190,6 @@ def build_properties(draft: ArticleDraft, *, collected_at: datetime | None = Non
         PROP_SLUG: {"rich_text": _rich_text(draft.slug)},
         PROP_SOURCE_URL: {"url": draft.source_url},
         PROP_DISCUSSION_URL: {"url": draft.discussion_url},
-        PROP_HATENA_URL: {"url": draft.hatena_url},
         PROP_SCORE: {"number": draft.engagement.score},
         PROP_COMMENTS: {"number": draft.engagement.comments},
         PROP_TAGS: {"multi_select": [{"name": t} for t in draft.tags]},
@@ -532,7 +530,6 @@ DATABASE_SCHEMA: dict = {
     PROP_SOURCE: {"select": {}},
     PROP_SOURCE_URL: {"url": {}},
     PROP_DISCUSSION_URL: {"url": {}},
-    PROP_HATENA_URL: {"url": {}},
     PROP_SCORE: {"number": {}},
     PROP_COMMENTS: {"number": {}},
     PROP_TAGS: {"multi_select": {}},
@@ -551,6 +548,17 @@ RENAMED_PROPS: dict[str, str] = {
     "HN URL": PROP_DISCUSSION_URL,
     "HN Score": PROP_SCORE,
     "HN Comments": PROP_COMMENTS,
+}
+
+
+#: 廃止した列 → 理由。notion-setup は**消さない**。残っていれば名指しで知らせ、
+#: 消すかどうか・いつ消すかは人が決める
+#: （古いコードがまだ動いているうちに消すと、その compose が失敗する）。
+#: コードはもうこの列に書かない
+RETIRED_PROPS: dict[str, str] = {
+    # はてブのコメントページの URL は Source URL から API なしで作れ（links.py）、
+    # ページ本文の出典にも同じリンクがある。この列を読み戻す処理も無い
+    "Hatena URL": "Source URL から作れ、ページ本文の出典にも同じリンクがある",
 }
 
 
@@ -638,6 +646,11 @@ def unrenamed_old_props(existing: dict) -> dict[str, str]:
         elif got != want:
             out[old] = f"型が {got} で、{new!r} の {want} と違う"
     return out
+
+
+def retired_props(existing: dict) -> dict[str, str]:
+    """既存の DB に残っている廃止した列（列名 → 廃止した理由）。"""
+    return {name: why for name, why in RETIRED_PROPS.items() if name in existing}
 
 
 def patch_properties_payload(existing: dict) -> dict:

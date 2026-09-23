@@ -172,6 +172,11 @@ uv run imotech notion-setup
   `notion-sync` は投入したページの id を `data/candidates.jsonl` に書き戻す。push しないと、次の Actions の
   実行が持っている記録とずれる。
 
+**廃止した列（`notion-setup` が「★ 列 … は廃止しました」と出すもの）を消すのは、その版が main に push 済みで、実行中の daily.yml が無くなってから**
+（`gh run list --workflow daily.yml --status in_progress` が空）。
+先に消すと、main の古いコードで走る `compose` がその列に書こうとして全件失敗する。消してしまったら、
+その版を push すれば次から通る（その回の分は上の「全件が失敗した」の手順で回し直す）。
+
 #### 日々の運用
 
 ```bash

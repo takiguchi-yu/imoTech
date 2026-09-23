@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
+from imotech.links import hatena_bookmark_url
 from imotech.models import ArticleDraft, DiscoursePoint, Engagement, GlossaryEntry, UseCase
 from imotech.notion import (
     DATABASE_SCHEMA,
@@ -29,6 +30,7 @@ from imotech.notion import (
     build_properties,
     create_database_payload,
     patch_properties_payload,
+    retired_props,
     schema_diff,
     unrenamed_old_props,
 )
@@ -429,7 +431,6 @@ def test_必要なプロパティがすべて入る():
         "Source",
         "Source URL",
         "Discussion URL",
-        "Hatena URL",
         "Score",
         "Comments",
         "Tags",
@@ -467,6 +468,35 @@ def test_改名しない旧名の列を知らせる():
 def test_ソース固有の名前の列を作らない():
     # 列は意味ごとに 1 つ。ソースを足すたびに列が増えないこと
     assert not [k for k in DATABASE_SCHEMA if "HN" in k or "Qiita" in k]
+
+
+def test_Hatena_URLは列に書かない():
+    # Source URL から作れ、ページ本文の出典に同じリンクがある
+    assert "Hatena URL" not in build_properties(_draft())
+    assert "Hatena URL" not in DATABASE_SCHEMA
+
+
+def test_はてブのリンクはページ本文に残る():
+    texts = [
+        rt["text"]["content"]
+        for b in build_blocks(_draft())
+        for rt in b.get(b["type"], {}).get("rich_text", [])
+    ]
+    # フィクスチャの値が hatena_bookmark_url と同じ形であることも併せて確かめる。
+    # compose が hatena_bookmark_url で組み立てる経路（cli.py）はこのテストでは通らない
+    draft = _draft()
+    assert f"はてなブックマーク: {hatena_bookmark_url(draft.source_url)}" in texts
+
+
+def test_廃止した列が残っていれば知らせる():
+    # notion-setup は消さない。名指しで知らせて、消すかは人が決める
+    assert set(retired_props(_existing(**{"Hatena URL": {"type": "url"}}))) == {"Hatena URL"}
+    assert retired_props(_existing()) == {}
+
+
+def test_廃止した列は追加も改名もしない():
+    missing, rename, mismatched = schema_diff(_existing(**{"Hatena URL": {"type": "url"}}))
+    assert missing == {} and rename == {} and mismatched == {}
 
 
 def test_タグはmulti_selectになる():

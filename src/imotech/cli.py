@@ -26,6 +26,7 @@ from .notion import (
     NotionError,
     create_database_payload,
     patch_properties_payload,
+    retired_props,
     schema_diff,
     unrenamed_old_props,
 )
@@ -499,8 +500,12 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
             f"Notion への投入が {len(notion_failed)} 件すべて失敗しました。"
             "NOTION_TOKEN / NOTION_DATABASE_ID とインテグレーションの接続を確認してください。"
             "上の [warn] に列の名前が出ていれば、DB の列名がコードと食い違っています。"
-            "`notion-setup` で揃えてから、もう一度 compose を実行してください"
-            "（この回の候補は処理済みになっていません。README の「コードを更新したら」）。",
+            "`notion-setup` で揃えてから入れ直してください"
+            "（廃止した列を先に消してしまったなら、揃えるのではなく、"
+            "その版を main に push します）。"
+            "Actions で失敗したなら何も commit されていないので `gh workflow run daily.yml`、"
+            "手元で実行したなら記事は書けて候補は処理済みなので `notion-sync`"
+            "（README の「コードを更新したら」）。",
             err=True,
         )
         return 1
@@ -878,6 +883,16 @@ def _notion_patch_existing(settings: Settings, args: argparse.Namespace) -> int:
                 # 足さずに改名する（notion.py の RENAMED_PROPS / タイトル列）
                 _p(f"改名: {old_name!r} → {spec['name']!r}（列の値はそのまま残る）")
         _p(f"追加するプロパティ: {len(missing)} 件 {sorted(missing)}")
+        retired = retired_props(existing)
+        for name, why in sorted(retired.items()):
+            # 自動では消さない。消すかどうか・いつ消すかは人が決める
+            _p(
+                f"★ 列 {name!r} は廃止しました（{why}）。もう書きません。"
+                "残しても動作に影響はありません（新しいページで空欄になるだけ）。"
+                "消すなら、この版が main に push 済みで、実行中の daily.yml が無くなってから"
+                " Notion の UI で消してください（先に消すと、古いコードの compose が失敗します）。",
+                err=True,
+            )
         leftover = unrenamed_old_props(existing)
         for old_name, why in sorted(leftover.items()):
             # 黙って残すと、値が旧名の列に取り残されたまま新しい列が空で並ぶ
@@ -904,8 +919,12 @@ def _notion_patch_existing(settings: Settings, args: argparse.Namespace) -> int:
             return 1
 
         if not missing and not rename:
-            if leftover:
-                _p("設計書の列は揃っています。★ の旧名の列だけが残っています（何もしません）。")
+            if leftover or retired:
+                _p(
+                    "設計書の列は揃っています。★ の列だけが残っています"
+                    f"（改名しない旧名 {len(leftover)} 件・廃止した列 {len(retired)} 件。"
+                    "何もしません）。"
+                )
             else:
                 _p("スキーマは既に揃っています。何もしません。")
             return 0
