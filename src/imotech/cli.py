@@ -31,6 +31,7 @@ from .notion import (
 from .pipeline import mark_skipped, matured_candidates, select
 from .render import (
     article_path,
+    ensure_use_case_note,
     from_markdown,
     has_imo,
     imo_of,
@@ -728,7 +729,9 @@ def cmd_publish(settings: Settings, args: argparse.Namespace) -> int:
                 continue
 
             try:
-                updated = set_imo(md, page.imo)
+                # **公開の直前に但し書きを補う。** 人が Markdown を手で編集して
+                # 消していても、推測が事実として公開されないようにする（冪等）
+                updated = ensure_use_case_note(set_imo(md, page.imo))
             except ValueError as e:
                 # 空白や不可視文字だけの imo、見出しが無い、など。
                 # ここで落とすと以降の承認済みページが 1 件も処理されない

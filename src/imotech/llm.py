@@ -21,6 +21,7 @@ from .models import (
     DiscoursePoint,
     GlossaryEntry,
     Story,
+    UseCase,
 )
 from .render import IMO_PLACEHOLDER, IMO_SENTINEL
 
@@ -28,6 +29,10 @@ PROMPT_PATH = Path(__file__).with_name("prompts") / "compose.md"
 
 # slug の日付は JST。render.py の publishedAt と揃える
 JST = timezone(timedelta(hours=9))
+
+#: 用語と使いどころの件数の上限。スキーマ（maxItems）と後処理の両方がここを見る
+MAX_GLOSSARY = 5
+MAX_USE_CASES = 3
 
 RESPONSE_SCHEMA = {
     "type": "object",
@@ -66,7 +71,23 @@ RESPONSE_SCHEMA = {
                 },
                 "required": ["term", "description"],
             },
-            "maxItems": 5,
+            "maxItems": MAX_GLOSSARY,
+        },
+        # その話題が誰のどんな場面で効きそうか。**元記事に書かれていない応用案を含む**
+        # 唯一のフィールド（prompts/compose.md の「守ること」に例外を書いてある）。
+        # glossary と同じく minItems を置かず required にも入れない — 主張・意見の
+        # 記事には使いどころが無く、数を埋めさせると的外れな提案が並ぶ
+        "use_cases": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "scene": {"type": "string"},
+                    "detail": {"type": "string"},
+                },
+                "required": ["scene", "detail"],
+            },
+            "maxItems": MAX_USE_CASES,
         },
     },
     "required": ["title", "slug_hint", "digest", "discourse", "tags"],
@@ -298,37 +319,74 @@ def _parse(resp: object) -> dict:
     return json.loads(text)
 
 
-# 改行が入ると Markdown の 1 行が割れ、`- **語**: 説明` の形が崩れる。
+# 改行が入ると Markdown の 1 行が割れ、`- **ラベル**: 本文` の形が崩れる。
 # 2 行目以降は from_markdown が読み戻せず黙って消え、`## ` で始まる行なら
-# 以降の用語ごと別セクション扱いになる（render.py の _GLOSSARY_LINE_RE を参照）
+# 以降の項目ごと別セクション扱いになる（render.py の _LABELED_LINE_RE を参照）。
+# **用語と使いどころの両方に効く** — どちらも同じ形で書き出している
 _WHITESPACE_RUN_RE = re.compile(r"\s+")
 
 
-def _to_glossary(raw: object) -> list[GlossaryEntry]:
-    """LLM が返した glossary を GlossaryEntry のリストにする。
+#: `- **ラベル**: 本文` の 1 行として成立する長さの上限。
+#:
+#: プロンプトは用語 30〜80 字・使いどころ 60〜120 字を指示しているが、
+#: **構造化出力の制約はプロバイダ側の努力目標**で、フォールバック先のモデルほど
+#: 守らないことがある。桁で外れたものを通すと、Markdown の 1 行が数千字になり、
+#: Notion では 1 件が複数のブロックに割れて「別々の項目」に見える。
+#: **少しの超過は許し、桁で外れたものだけ捨てる**（切り詰めると文が壊れるので捨てる）。
+_ASTERISK_RE = re.compile(r"\*+")
+_MAX_LABEL_CHARS = 100
+_MAX_TEXT_CHARS = 300
 
-    **ここは LLM の出力をそのまま受ける唯一の経路なので、型を信用しない。**
-    `glossary` は RESPONSE_SCHEMA の required に入れていない（用語が要らない記事で
-    数を埋めさせないため）ので、モデルが型を外しても弾かれずに届く。
-    配列でなければ空、要素が dict でなければ捨てる。
+
+def _labeled_pairs(raw: object, label_key: str, text_key: str, limit: int) -> list[tuple[str, str]]:
+    """LLM が返した `[{label_key: ..., text_key: ...}, ...]` を 2 つ組の並びにする。
+
+    **ここは LLM の出力をそのまま受ける唯一の経路なので、型も長さも件数も信用しない。**
+    `glossary` も `use_cases` も RESPONSE_SCHEMA の required に入れていない
+    （要らない記事で数を埋めさせないため）ので、モデルが制約を外しても弾かれずに届く。
     """
     if not isinstance(raw, list):
         return []
-    out: list[GlossaryEntry] = []
+    out: list[tuple[str, str]] = []
     for item in raw:
         if not isinstance(item, dict):
             continue
-        term = _WHITESPACE_RUN_RE.sub(" ", str(item.get("term", ""))).strip()
-        desc = _WHITESPACE_RUN_RE.sub(" ", str(item.get("description", ""))).strip()
-        if not term or not desc:
+        # **ラベルから `*` を落とす。** `- **ラベル**: 本文` の形で書き出すので、
+        # ラベルに `**` が入ると閉じ位置がずれ、往復で内容が変わる
+        # （`scene="A**: B"` → 読み戻すと scene='A', detail='B**: …'）
+        label = _ASTERISK_RE.sub(
+            "", _WHITESPACE_RUN_RE.sub(" ", str(item.get(label_key, "")))
+        ).strip()
+        text = _WHITESPACE_RUN_RE.sub(" ", str(item.get(text_key, ""))).strip()
+        if not label or not text:
+            continue
+        if len(label) > _MAX_LABEL_CHARS or len(text) > _MAX_TEXT_CHARS:
             continue
         # imo のプレースホルダの文言を記事に持ち込まない。`has_imo` は imo 節の中しか
         # 見ないので判定は汚れないが、「このコメント行を消すまで公開されません」という
-        # 運営の内部指示が用語の説明として読者に出るのは記事として成立しない
-        if IMO_PLACEHOLDER in term + desc or IMO_SENTINEL in term + desc:
+        # 運営の内部指示が読者に出るのは記事として成立しない
+        if IMO_PLACEHOLDER in label + text or IMO_SENTINEL in label + text:
             continue
-        out.append(GlossaryEntry(term=term, description=desc))
+        out.append((label, text))
+        # **件数もここで守る。** スキーマの maxItems を超えて返るモデルがある
+        if len(out) >= limit:
+            break
     return out
+
+
+def _to_glossary(raw: object) -> list[GlossaryEntry]:
+    """LLM が返した glossary を GlossaryEntry のリストにする。"""
+    return [
+        GlossaryEntry(term=t, description=d)
+        for t, d in _labeled_pairs(raw, "term", "description", MAX_GLOSSARY)
+    ]
+
+
+def _to_use_cases(raw: object) -> list[UseCase]:
+    """LLM が返した use_cases を UseCase のリストにする。"""
+    return [
+        UseCase(scene=s, detail=d) for s, d in _labeled_pairs(raw, "scene", "detail", MAX_USE_CASES)
+    ]
 
 
 def _to_draft(
@@ -341,6 +399,7 @@ def _to_draft(
         for d in payload.get("discourse") or []
     ]
     glossary = _to_glossary(payload.get("glossary"))
+    use_cases = _to_use_cases(payload.get("use_cases"))
     return ArticleDraft(
         url_hash=url_hash,
         title=payload["title"],
@@ -349,6 +408,7 @@ def _to_draft(
         discourse=discourse,
         tags=normalize_tags(list(payload.get("tags") or [])),
         glossary=glossary,
+        use_cases=use_cases,
         source_url=story.url,
         source_title=story.title,
         source=story.ref.source,

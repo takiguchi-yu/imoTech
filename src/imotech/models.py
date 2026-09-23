@@ -192,6 +192,26 @@ class GlossaryEntry:
 
 
 @dataclass(frozen=True)
+class UseCase:
+    """その話題が、誰のどんな場面で効きそうか。
+
+    **他の節と違い、元記事に書かれていないことを含む。** 元記事の内容をもとに
+    生成 AI が考えた応用案で、要旨（元記事が言ったこと）や論調（反応で言われたこと）
+    とは性格が違う。**推測であることは表示層が但し書きで示す**（`render` / `notion`）
+    — 値に文言を混ぜると、2 箇所で古くなる。
+
+    `GlossaryEntry` と同じ 2 フィールドにしてあるのは、記事での見た目を
+    `- **場面**: 説明` に揃えるため。
+    """
+
+    scene: str
+    """どんな場面か（例: 「社内の問い合わせ対応を自動化したいとき」）。"""
+
+    detail: str
+    """その場面で何にどう効くか。"""
+
+
+@dataclass(frozen=True)
 class ArticleDraft:
     """LLM が生成し、Notion に下書きとして投入する記事。imo はまだ無い。"""
 
@@ -203,6 +223,8 @@ class ArticleDraft:
     tags: list[str] = field(default_factory=list)
     # 0 件を許す。そういう語が無い記事で数を埋めさせない
     glossary: list[GlossaryEntry] = field(default_factory=list)
+    # 同じく 0 件を許す。主張・意見の記事には「使いどころ」が無い
+    use_cases: list[UseCase] = field(default_factory=list)
     source_url: str = ""
     source_title: str = ""
     source: str = ""

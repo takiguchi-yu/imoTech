@@ -11,13 +11,16 @@ from pathlib import Path
 import pytest
 
 from imotech.config import REPO_ROOT
-from imotech.models import ArticleDraft, DiscoursePoint, Engagement, GlossaryEntry
+from imotech.models import ArticleDraft, DiscoursePoint, Engagement, GlossaryEntry, UseCase
 from imotech.render import (
     GLOSSARY_HEADING,
     IMO_PLACEHOLDER,
     IMO_PROMPT,
     IMO_SENTINEL,
+    USE_CASE_HEADING,
+    USE_CASE_NOTE,
     article_path,
+    ensure_use_case_note,
     from_markdown,
     has_imo,
     imo_of,
@@ -663,3 +666,155 @@ def test_用語にセンチネルが入ってもimoの判定を汚さない():
     md = set_imo(to_markdown(_draft(glossary=[entry])), "所感を書いた。")
     assert imo_of(md) == "所感を書いた。"
     assert has_imo(md) is True
+
+
+# --- 使いどころ ------------------------------------------------------------
+#
+# **この節だけは元記事に書かれていないことを含む**（生成 AI が考えた応用案）。
+# 断定的な提案として読まれると、外れていたときに記事全体の信頼性を損なうので、
+# 但し書きが必ず付くことをここで固定する。
+
+
+def _cases(n: int = 1) -> list[UseCase]:
+    return [UseCase(f"場面{i}", f"説明{i}") for i in range(1, n + 1)]
+
+
+def test_使いどころは論調の後imoの前に出る():
+    md = to_markdown(_draft(use_cases=_cases()))
+    heads = [line for line in md.splitlines() if line.startswith("## ")]
+    assert heads == ["## 元記事の要旨", "## 議論の論調", USE_CASE_HEADING, "## imo"]
+
+
+def test_使いどころには必ず但し書きが付く():
+    md = to_markdown(_draft(use_cases=_cases()))
+    lines = md.splitlines()
+    i = lines.index(USE_CASE_HEADING)
+    # 見出しの直後（空行を挟んで）に但し書きが来る
+    assert USE_CASE_NOTE in lines[i : i + 3]
+    assert "生成 AI が考えた応用案" in USE_CASE_NOTE
+
+
+def test_使いどころが0件なら見出しごと出さない():
+    md = to_markdown(_draft(use_cases=[]))
+    assert USE_CASE_HEADING not in md
+    assert USE_CASE_NOTE not in md
+
+
+def test_使いどころの書式は用語と揃える():
+    md = to_markdown(_draft(use_cases=[UseCase("社内で試したいとき", "手元で動きます")]))
+    assert "- **社内で試したいとき**: 手元で動きます" in md
+
+
+def test_場面か説明が空の要素は行にしない():
+    # `- **場面**: ` の行は from_markdown が読み戻せず、往復で件数が合わなくなる
+    md = to_markdown(
+        _draft(use_cases=[UseCase("", "説明"), UseCase("場面", "  "), UseCase("A", "B")])
+    )
+    assert "- **A**: B" in md
+    assert md.count("- **") == 1  # 中身のある 1 件だけが行になる
+
+
+def test_使いどころはMarkdownから読み戻せる():
+    draft = _draft(use_cases=_cases(3))
+    back = from_markdown(to_markdown(draft))
+    assert back.use_cases == draft.use_cases
+
+
+def test_但し書きを項目として読み戻さない():
+    # 但し書きは `- **ラベル**: 本文` の形ではないので拾われない
+    back = from_markdown(to_markdown(_draft(use_cases=_cases(2))))
+    assert len(back.use_cases) == 2
+    assert all(USE_CASE_NOTE not in c.scene + c.detail for c in back.use_cases)
+
+
+def test_使いどころと用語を取り違えない():
+    draft = _draft(use_cases=[UseCase("場面X", "説明X")], glossary=[GlossaryEntry("語Y", "意味Y")])
+    back = from_markdown(to_markdown(draft))
+    assert back.use_cases == draft.use_cases
+    assert back.glossary == draft.glossary
+
+
+def test_論調が無くても使いどころは出る():
+    # 反応 0 件のソース（Qiita など）でも、使いどころは書ける
+    md = to_markdown(_draft(discourse=[], use_cases=_cases()))
+    heads = [line for line in md.splitlines() if line.startswith("## ")]
+    assert heads == ["## 元記事の要旨", USE_CASE_HEADING, "## imo"]
+
+
+def test_使いどころがあってもimoの判定は壊れない():
+    # M6 で用語を足したとき has_imo を壊した前科がある
+    md = to_markdown(_draft(use_cases=_cases(), glossary=[GlossaryEntry("語", "意味")]))
+    assert has_imo(md) is False
+    assert imo_of(md) is None
+    filled = set_imo(md, "所感です。")
+    assert has_imo(filled) is True
+    assert imo_of(filled) == "所感です。"
+    # imo 節に使いどころが混ざらない
+    assert "場面1" not in imo_section_text(filled)
+
+
+def test_imoを差し込んでも使いどころは残る():
+    md = set_imo(to_markdown(_draft(use_cases=_cases())), "所感です。")
+    assert USE_CASE_HEADING in md and "- **場面1**: 説明1" in md
+
+
+def test_全部そろった記事の見出しの並び():
+    md = to_markdown(_draft(use_cases=_cases(), glossary=[GlossaryEntry("語", "意味")]))
+    heads = [line for line in md.splitlines() if line.startswith("## ")]
+    assert heads == [
+        "## 元記事の要旨",
+        "## 議論の論調",
+        USE_CASE_HEADING,
+        "## imo",
+        GLOSSARY_HEADING,
+    ]
+
+
+# --- 但し書きが消えたときの復元 ---------------------------------------------
+#
+# **人が Markdown を手で編集して但し書きだけ落とすと、推測が事実として公開される。**
+# from_markdown は但し書きの有無に関係なく項目を読み戻し、サイトのゲート
+# （site/src/lib/imo.ts）は imo しか見ないので、ビルドもテストも通ってしまう。
+
+
+def _without_note(md: str) -> str:
+    return "\n".join(line for line in md.splitlines() if line != USE_CASE_NOTE) + "\n"
+
+
+def test_但し書きが消えていたら補う():
+    md = to_markdown(_draft(use_cases=_cases()))
+    stripped = _without_note(md)
+    assert USE_CASE_NOTE not in stripped
+    assert USE_CASE_NOTE in ensure_use_case_note(stripped)
+
+
+def test_但し書きの補完は冪等():
+    md = to_markdown(_draft(use_cases=_cases()))
+    assert ensure_use_case_note(md) == md
+    assert ensure_use_case_note(ensure_use_case_note(md)) == ensure_use_case_note(md)
+
+
+def test_使いどころが無い記事には但し書きを足さない():
+    md = to_markdown(_draft(use_cases=[]))
+    assert ensure_use_case_note(md) == md
+    assert USE_CASE_NOTE not in ensure_use_case_note(md)
+
+
+def test_補完しても項目は壊れない():
+    draft = _draft(use_cases=_cases(2))
+    restored = ensure_use_case_note(_without_note(to_markdown(draft)))
+    assert from_markdown(restored).use_cases == draft.use_cases
+
+
+def test_補完した但し書きは項目より前に入る():
+    md = _without_note(to_markdown(_draft(use_cases=_cases())))
+    lines = ensure_use_case_note(md).splitlines()
+    assert lines.index(USE_CASE_NOTE) < lines.index("- **場面1**: 説明1")
+
+
+def test_imoを差し込んだ後でも但し書きを補える():
+    # 実際の公開経路（cmd_publish）はこの順で通る
+    md = set_imo(to_markdown(_draft(use_cases=_cases())), "所感です。")
+    restored = ensure_use_case_note(_without_note(md))
+    assert USE_CASE_NOTE in restored
+    assert imo_of(restored) == "所感です。"

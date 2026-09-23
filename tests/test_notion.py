@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from imotech.models import ArticleDraft, DiscoursePoint, Engagement, GlossaryEntry
+from imotech.models import ArticleDraft, DiscoursePoint, Engagement, GlossaryEntry, UseCase
 from imotech.notion import (
     DATABASE_SCHEMA,
     MAX_CHILDREN_PER_REQUEST,
@@ -31,6 +31,7 @@ from imotech.notion import (
     patch_properties_payload,
     schema_diff,
 )
+from imotech.render import USE_CASE_NOTE
 
 DS = "ds-1111"
 DB = "db-2222"
@@ -788,3 +789,79 @@ def test_長い用語の説明は切り捨てずに分割される():
         for b in blocks
         for t in (b.get(b["type"], {}).get("rich_text") or [])
     )
+
+
+# --- 使いどころ ------------------------------------------------------------
+#
+# レビュー面は人が公開の可否を決める場所なので、**「元記事に書いてあること」と
+# 「生成 AI が考えた応用案」が混ざって見えてはいけない**。
+
+
+def _headings(blocks: list) -> list[str]:
+    return [
+        b["heading_2"]["rich_text"][0]["text"]["content"]
+        for b in blocks
+        if b.get("type") == "heading_2"
+    ]
+
+
+def _paragraphs(blocks: list) -> list[str]:
+    return [
+        b["paragraph"]["rich_text"][0]["text"]["content"]
+        for b in blocks
+        if b.get("type") == "paragraph"
+    ]
+
+
+def test_使いどころは論調の後用語の前に出る():
+    blocks = build_blocks(
+        _draft(use_cases=[UseCase("場面", "説明")], glossary=[GlossaryEntry("語", "意味")])
+    )
+    assert _headings(blocks) == ["元記事の要旨", "議論の論調", "使いどころ", "用語", "出典"]
+
+
+def test_レビュー面にも但し書きを出す():
+    blocks = build_blocks(_draft(use_cases=[UseCase("場面", "説明")]))
+    assert USE_CASE_NOTE in _paragraphs(blocks)
+
+
+def test_使いどころが0件なら見出しを出さない():
+    assert "使いどころ" not in _headings(build_blocks(_draft(use_cases=[])))
+
+
+def test_使いどころの中身がブロックになる():
+    blocks = build_blocks(_draft(use_cases=[UseCase("社内で試したいとき", "手元で動きます")]))
+    bullets = [
+        b["bulleted_list_item"]["rich_text"][0]["text"]["content"]
+        for b in blocks
+        if b.get("type") == "bulleted_list_item"
+    ]
+    assert "社内で試したいとき: 手元で動きます" in bullets
+
+
+def test_但し書きは項目より前に置く():
+    """後ろだと、読んだあとに「推測でした」と知ることになり、レビューの判断が一度汚れる。"""
+    blocks = build_blocks(_draft(use_cases=[UseCase("場面", "説明")]))
+    types = [b.get("type") for b in blocks]
+    i = next(
+        n
+        for n, b in enumerate(blocks)
+        if b.get("type") == "heading_2"
+        and b["heading_2"]["rich_text"][0]["text"]["content"] == "使いどころ"
+    )
+    # 見出しの直後が但し書き、そのあとに項目が来る
+    assert types[i + 1] == "paragraph"
+    assert blocks[i + 1]["paragraph"]["rich_text"][0]["text"]["content"] == USE_CASE_NOTE
+    assert types[i + 2] == "bulleted_list_item"
+
+
+def test_空の使いどころはレビュー面にも出さない():
+    # 公開記事と同じフィルタを通す。片方だけ空項目を出すと
+    # 「レビュー面には節があるのに公開記事には無い」が起きる
+    blocks = build_blocks(_draft(use_cases=[UseCase("", "説明"), UseCase("場面", "  ")]))
+    assert "使いどころ" not in _headings(blocks)
+
+
+def test_空の用語もレビュー面に出さない():
+    blocks = build_blocks(_draft(glossary=[GlossaryEntry("", "意味")]))
+    assert "用語" not in _headings(blocks)

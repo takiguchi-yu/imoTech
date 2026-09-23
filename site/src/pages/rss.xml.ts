@@ -8,7 +8,7 @@ export async function GET(context: APIContext) {
   return rss({
     title: "imoTech",
     description:
-      "Hacker News や Qiita で話題になった技術記事を、元記事の要旨と議論の論調、そして運営者の imo とともに日本語で紹介します。",
+      "Hacker News や Qiita で話題になった技術記事を、元記事の要旨、議論の論調、使いどころ、そして運営者の imo とともに日本語で紹介します。",
     // astro.config.mjs の site。未設定なら localhost
     site: context.site ?? "http://localhost:4321",
     items: articles.map((a) => ({

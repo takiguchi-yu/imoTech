@@ -18,6 +18,11 @@ import httpx
 
 from .models import ApprovedPage, ArticleDraft
 
+# 記事本文と同じ但し書きを使う。**文言は 1 か所に閉じる** — レビュー面と公開記事で
+# 違うことが書いてあると、どちらが正か分からなくなる。
+# `llm.py` が `render` から imo のプレースホルダを取っているのと同じ向きの依存
+from .render import USE_CASE_NOTE, usable_glossary, usable_use_cases
+
 API = "https://api.notion.com/v1"
 
 # 現行の最新版。古い版でも動くが、data_source を使う新しいデータモデルが使えない。
@@ -143,9 +148,23 @@ def build_blocks(draft: ArticleDraft) -> list[dict]:
         for point in draft.discourse:
             blocks.append(_heading(3, point.point))
             blocks += [_paragraph(chunk) for chunk in _split_long(point.detail)]
-    if draft.glossary:
+    # 記事と同じ並び（論調 → 使いどころ → 用語）。imo は本文ではなくプロパティ側にある。
+    # **但し書きを必ず添える。** ここは人が公開の可否を決める面なので、
+    # 「元記事に書いてあること」と「生成 AI が考えた応用案」が混ざって見えてはいけない
+    # **公開記事と同じフィルタを通す。** 片方だけ空項目を出すと、
+    # 「レビュー面には節があるのに公開記事には無い」が起きる
+    cases = usable_use_cases(draft.use_cases)
+    if cases:
+        blocks.append(_heading(2, "使いどころ"))
+        # 但し書きは**項目より先**に置く。後ろだと、読んだあとに「推測でした」と
+        # 知ることになり、レビューの判断が一度汚れる
+        blocks.append(_paragraph(USE_CASE_NOTE))
+        for case in cases:
+            blocks += _bullets(f"{case.scene}: {case.detail}")
+    entries = usable_glossary(draft.glossary)
+    if entries:
         blocks.append(_heading(2, "用語"))
-        for entry in draft.glossary:
+        for entry in entries:
             blocks += _bullets(f"{entry.term}: {entry.description}")
     blocks += [
         {"type": "divider", "divider": {}},

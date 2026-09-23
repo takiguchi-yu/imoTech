@@ -9,11 +9,12 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
-from .models import ArticleDraft, DiscoursePoint, Engagement, GlossaryEntry
+from .models import ArticleDraft, DiscoursePoint, Engagement, GlossaryEntry, UseCase
 
 JST = timezone(timedelta(hours=9))
 
@@ -141,13 +142,21 @@ def to_markdown(draft: ArticleDraft, *, published_at: datetime | None = None) ->
             body += [f"### {point.point}", "", point.detail, ""]
     else:
         body += [""]
+    # **論調の後、imo の前。** 機械が書く部分（要旨・論調・使いどころ）をまとめ、
+    # そのあとに運営者の imo が来る流れにする。
+    # 使いどころが無い記事（主張・意見の記事など）では見出しごと出さない
+    cases = usable_use_cases(draft.use_cases)
+    if cases:
+        body += [USE_CASE_HEADING, "", USE_CASE_NOTE, ""]
+        body += [f"- **{_one_line(c.scene)}**: {_one_line(c.detail)}" for c in cases]
+        body += [""]
     body += ["## imo", "", IMO_PROMPT, ""]
     # imo の後ろに置く。記事の締めは運営者の所感で、用語は付録として最後に読む。
     # set_imo は次の見出しまでを imo 節として扱うので、ここに足しても壊れない。
     # 用語が無い記事では見出しごと出さない（空の節を作らない）
     # 空の語・説明は行にしない。`- **語**: ` の行は from_markdown が読み戻せず、
     # 往復で件数が合わなくなる（LLM 経由は llm.py が弾くが、直接作る経路もある）
-    entries = [e for e in draft.glossary if e.term.strip() and e.description.strip()]
+    entries = usable_glossary(draft.glossary)
     if entries:
         body += [GLOSSARY_HEADING, ""]
         # 改行が入ると 1 行が割れて形が崩れるので、ここでも潰しておく
@@ -155,6 +164,46 @@ def to_markdown(draft: ArticleDraft, *, published_at: datetime | None = None) ->
         body += [""]
 
     return "\n".join(fm + body)
+
+
+def usable_use_cases(cases: Sequence[UseCase]) -> list[UseCase]:
+    """記事の 1 行として成立する使いどころだけを残す。
+
+    空の場面・説明は行にしない。`- **場面**: ` の行は `from_markdown` が読み戻せず、
+    往復で件数が合わなくなる（LLM 経由は `llm.py` が弾くが、手編集の経路もある）。
+    **Markdown と Notion の両方がこれを通す** — 片方だけ空項目を出すと、
+    「レビュー面には節があるのに公開記事には無い」が起きる。
+    """
+    return [c for c in cases if c.scene.strip() and c.detail.strip()]
+
+
+def usable_glossary(entries: Sequence[GlossaryEntry]) -> list[GlossaryEntry]:
+    """同上。用語の側。"""
+    return [e for e in entries if e.term.strip() and e.description.strip()]
+
+
+def ensure_use_case_note(markdown: str) -> str:
+    """使いどころの節に但し書きが無ければ補う。冪等。
+
+    **人が Markdown を手で編集したときに但し書きだけ落ちると、推測が事実として
+    公開される。** `from_markdown` は但し書きの有無に関係なく項目を読み戻し、
+    サイトのゲート（`site/src/lib/imo.ts`）は imo しか見ないので、
+    ビルドもテストも通ってそのまま公開に至る。公開の直前にここで補う。
+    """
+    lines = markdown.splitlines()
+    try:
+        i = lines.index(USE_CASE_HEADING)
+    except ValueError:
+        return markdown
+    # 見出しから次の見出しまでに但し書きがあるか
+    end = next(
+        (j for j in range(i + 1, len(lines)) if lines[j].startswith("## ")),
+        len(lines),
+    )
+    if USE_CASE_NOTE in lines[i + 1 : end]:
+        return markdown
+    lines[i + 1 : i + 1] = ["", USE_CASE_NOTE]
+    return "\n".join(lines) + ("\n" if markdown.endswith("\n") else "")
 
 
 def has_imo(markdown: str) -> bool:
@@ -223,18 +272,28 @@ IMO_HEADING = "## imo"
 # 用語の節。見出しと節名は 1 か所から導く（片方だけ直す事故を防ぐ）
 GLOSSARY_HEADING = "## 用語"
 GLOSSARY_SECTION = GLOSSARY_HEADING.removeprefix("## ")
+# 使いどころの節。同上
+USE_CASE_HEADING = "## 使いどころ"
+USE_CASE_SECTION = USE_CASE_HEADING.removeprefix("## ")
+# **この節だけは元記事に書かれていないことを含む。** 断定的な提案として読まれると、
+# 外れていたときに記事全体の信頼性を損なうので、節の冒頭で性格を明示する。
+# 値（models.UseCase）ではなく表示層が持つのは、文言を 1 か所に閉じるため
+USE_CASE_NOTE = (
+    "※ 元記事の内容をもとに生成 AI が考えた応用案です。元記事に書かれているとは限りません。"
+)
 
 # imo の見出し。**サイト側（site/src/lib/imo.ts の IMO_HEADING）と同じ規則**にする。
 # 素朴な部分一致にしていたため、`##  imo`（空白 2 個）や `##\timo` を取りこぼし、
 # 逆に `## imo について` では「について」を imo 本文として取り込んでいた。
 # 判定がずれると「Notion では公開済みなのにサイトに出ない」が起きる。
 _IMO_HEADING_RE = re.compile(r"^##[ \t]+imo[ \t]*$", re.MULTILINE)
-# 用語の 1 行。`- **語**: 説明` の形で書き、from_markdown が同じ形で読み戻す。
-# 語の途中に `**` があっても、コロンの直前の `**` までを語として取る
+# ラベル付きの 1 行。`- **ラベル**: 本文` の形で書き、from_markdown が同じ形で読み戻す。
+# **用語（語 → 説明）と使いどころ（場面 → 何に効くか）で同じ形**を使う。
+# ラベルの途中に `**` があっても、コロンの直前の `**` までをラベルとして取る
 # （非貪欲だが、後続の `**` + コロンを満たすまでバックトラックするため）。
-# 行頭は strip してから照合する＝入れ子の子項目も同列の用語として拾う
+# 行頭は strip してから照合する＝入れ子の子項目も同列の項目として拾う
 _WHITESPACE_RUN_RE = re.compile(r"\s+")
-_GLOSSARY_LINE_RE = re.compile(r"^-\s+\*\*(?P<term>.+?)\*\*\s*[:：]\s*(?P<desc>.+)$")
+_LABELED_LINE_RE = re.compile(r"^-\s+\*\*(?P<label>.+?)\*\*\s*[:：]\s*(?P<text>.+)$")
 _NEXT_HEADING_RE = re.compile(r"^## ", re.MULTILINE)
 _HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
 
@@ -374,6 +433,7 @@ def from_markdown(text: str) -> ArticleDraft:
     digest: list[str] = []
     discourse: list[DiscoursePoint] = []
     glossary: list[GlossaryEntry] = []
+    use_cases: list[UseCase] = []
     section = None
     point: str | None = None
     buf: list[str] = []
@@ -392,11 +452,16 @@ def from_markdown(text: str) -> ArticleDraft:
         if section == "元記事の要旨" and line.startswith("- "):
             digest.append(line[2:].strip())
         elif section == GLOSSARY_SECTION:
-            m = _GLOSSARY_LINE_RE.match(line.strip())
+            m = _LABELED_LINE_RE.match(line.strip())
             if m is not None:
                 glossary.append(
-                    GlossaryEntry(term=m["term"].strip(), description=m["desc"].strip())
+                    GlossaryEntry(term=m["label"].strip(), description=m["text"].strip())
                 )
+        elif section == USE_CASE_SECTION:
+            # 但し書き（USE_CASE_NOTE）はこの形に当たらないので、自然に無視される
+            m = _LABELED_LINE_RE.match(line.strip())
+            if m is not None:
+                use_cases.append(UseCase(scene=m["label"].strip(), detail=m["text"].strip()))
         elif section == "議論の論調":
             if line.startswith("### "):
                 flush()
@@ -415,6 +480,7 @@ def from_markdown(text: str) -> ArticleDraft:
         discourse=discourse,
         tags=tags,
         glossary=glossary,
+        use_cases=use_cases,
         source_url=source_url,
         source_title=_unquote_yaml(fm["sourceTitle"]),
         # 旧キー（hnUrl / hnScore / hnComments）も読む。ソースが Hacker News だけ

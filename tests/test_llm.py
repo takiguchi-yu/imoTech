@@ -15,7 +15,14 @@ from imotech.llm import (
     build_user_prompt,
     slugify,
 )
-from imotech.models import AnonymizedReaction, ArticleSource, Engagement, SourceRef, Story
+from imotech.models import (
+    AnonymizedReaction,
+    ArticleSource,
+    Engagement,
+    SourceRef,
+    Story,
+    UseCase,
+)
 from imotech.render import IMO_PLACEHOLDER, IMO_SENTINEL
 
 STORY = Story(
@@ -322,3 +329,109 @@ def test_論調を含まない応答からも記事を作れる():
     result = g.generate(STORY, ARTICLE, [], url_hash="abc123", hatena_url="https://b/x")
     assert result.draft.discourse == []
     assert result.draft.digest == ["A", "B", "C"]
+
+
+# --- 使いどころ ------------------------------------------------------------
+#
+# **このフィールドだけは元記事に書かれていない応用案を含む**（prompts/compose.md の
+# 「守ること」4・6 に例外を書いてある）。他のフィールドに同じ緩みが漏れていないかを
+# スキーマで固定する。
+
+
+def test_使いどころはスキーマにあるが必須ではない():
+    # 主張・意見の記事には使いどころが無い。数を埋めさせると的外れな提案が並ぶ
+    s = RESPONSE_SCHEMA["properties"]["use_cases"]
+    assert s["maxItems"] == 3
+    assert "minItems" not in s
+    assert "use_cases" not in RESPONSE_SCHEMA["required"]
+
+
+def test_使いどころの要素は場面と説明を必須にする():
+    item = RESPONSE_SCHEMA["properties"]["use_cases"]["items"]
+    assert sorted(item["properties"]) == ["detail", "scene"]
+    assert sorted(item["required"]) == ["detail", "scene"]
+
+
+def test_反応が無い記事でも使いどころは求める():
+    # 論調（discourse）は反応が要るが、使いどころは元記事だけで書ける
+    s = build_response_schema(with_discourse=False)
+    assert "use_cases" in s["properties"]
+    assert "discourse" not in s["properties"]
+
+
+def test_使いどころが返らなくても記事を作れる():
+    g = _gen({"m1": VALID_JSON})
+    result = _run(g)
+    assert result.draft.use_cases == []
+
+
+def test_使いどころを含む応答を読める():
+    payload = (
+        '{"title":"日本語のタイトル","slug_hint":"example-title",'
+        '"digest":["A","B","C"],'
+        '"discourse":[{"point":"論点","detail":"詳細","stance":"critical"}],'
+        '"tags":["rust"],'
+        '"use_cases":[{"scene":"社内で試したいとき","detail":"手元で動きます"}]}'
+    )
+    result = _run(_gen({"m1": payload}))
+    assert result.draft.use_cases == [UseCase("社内で試したいとき", "手元で動きます")]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '"use_cases":"文字列"',  # 配列でない
+        '"use_cases":[["場面","説明"]]',  # 要素が dict でない
+        '"use_cases":[{"scene":"","detail":"説明"}]',  # 場面が空
+        '"use_cases":[{"scene":"場面","detail":"  "}]',  # 説明が空白だけ
+        '"use_cases":[{"scene":"場面"}]',  # 説明が無い
+    ],
+)
+def test_壊れた使いどころは捨てる(raw):
+    # required に入れていないので、モデルが型を外しても弾かれずに届く
+    payload = (
+        '{"title":"T","slug_hint":"s","digest":["A","B","C"],'
+        '"discourse":[{"point":"p","detail":"d","stance":"mixed"}],'
+        f'"tags":["rust"],{raw}}}'
+    )
+    assert _run(_gen({"m1": payload})).draft.use_cases == []
+
+
+def test_imoのプレースホルダを使いどころに持ち込まない():
+    # 運営の内部指示が読者に出る事故を防ぐ（用語と同じ扱い）
+    payload = (
+        '{"title":"T","slug_hint":"s","digest":["A","B","C"],'
+        '"discourse":[{"point":"p","detail":"d","stance":"mixed"}],'
+        f'"tags":["rust"],"use_cases":[{{"scene":"場面","detail":"{IMO_PLACEHOLDER}"}}]}}'
+    )
+    assert _run(_gen({"m1": payload})).draft.use_cases == []
+
+
+def test_件数の上限をコードでも守る():
+    """**スキーマの maxItems はプロバイダ側の努力目標。** フォールバック先の
+    モデルほど守らないので、後処理でも切る。"""
+    from imotech.llm import MAX_GLOSSARY, MAX_USE_CASES, _to_glossary, _to_use_cases
+
+    many = [{"scene": f"s{i}", "detail": f"d{i}"} for i in range(10)]
+    assert len(_to_use_cases(many)) == MAX_USE_CASES
+    terms = [{"term": f"t{i}", "description": f"d{i}"} for i in range(10)]
+    assert len(_to_glossary(terms)) == MAX_GLOSSARY
+
+
+def test_桁で外れた長さは捨てる():
+    """Markdown の 1 行が数千字になると、Notion では 1 件が複数ブロックに割れて
+    「別々の項目」に見える。"""
+    from imotech.llm import _to_use_cases
+
+    assert _to_use_cases([{"scene": "x", "detail": "あ" * 3000}]) == []
+    assert _to_use_cases([{"scene": "あ" * 300, "detail": "d"}]) == []
+    # 少しの超過は許す（指示は 60〜120 字）
+    assert len(_to_use_cases([{"scene": "x", "detail": "あ" * 150}])) == 1
+
+
+def test_ラベルのアスタリスクを落とす():
+    """`- **ラベル**: 本文` の形で書き出すので、ラベルに `**` が入ると
+    閉じ位置がずれ、往復で内容が変わる。"""
+    from imotech.llm import _to_use_cases
+
+    assert _to_use_cases([{"scene": "A**: B", "detail": "d"}]) == [UseCase("A: B", "d")]
