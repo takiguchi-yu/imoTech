@@ -1,6 +1,6 @@
 # M14: 記事一覧にもアイキャッチを出す
 
-**Status:** 実装済み（レビューと検証の結果は末尾）
+**Status:** 完了（本番に反映済み。レビューと検証の結果は末尾）
 **Blocked by:** なし（M11 のアイキャッチがあること）
 
 ## なぜやるか
@@ -115,3 +115,14 @@ A の Minor は小さく直せるので残課題にせず直した。
 - [x] `.github/workflows/publish.yml` に 2 ステップ（`actionlint` 通過）
 - [x] 失敗通知の原因一覧に「デプロイ前の検査が落ちた」を足した
 - [x] `docs/DESIGN.md`（1 節の表・5.5）と `README.md` のワークフロー表
+
+## 本番での確認（2026-09-23）
+
+`gh workflow run publish.yml`（run 35850874318、63ca950）が成功。足した 2 つの検査ステップも success。
+
+| 確認 | 結果 |
+|---|---|
+| トップ `/` | 200。項目 1 件、`aria-hidden` 付きのサムネイル 1 件 |
+| タグ別 `/tags/economics/` | 200。項目 1 件、サムネイル 1 件 |
+| サムネイルの画像 `/og/2026-09-22-private-equity-medical-practices-ban.png` | 200 `image/png` |
+| 未公開記事の画像 `/og/2026-09-23-kev-decision-models-qwen.png` | 404（漏れていない） |
