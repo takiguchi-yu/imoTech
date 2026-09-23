@@ -1,6 +1,7 @@
 ---
+import ArticleEntry from "../../components/ArticleEntry.astro";
 import Base from "../../layouts/Base.astro";
-import { allTags, formatDate, publishedArticles } from "../../lib/articles";
+import { allTags, publishedArticles } from "../../lib/articles";
 
 export async function getStaticPaths() {
   const articles = await publishedArticles();
@@ -17,16 +18,7 @@ const { articles, tag } = Astro.props;
   <h1>#{tag}</h1>
   <p class="meta">{articles.length} 件</p>
   <ul class="entries">
-    {
-      articles.map((a) => (
-        <li>
-          <h2>
-            <a href={`/articles/${a.id}/`}>{a.data.title}</a>
-          </h2>
-          <p class="meta">{formatDate(a.data.publishedAt)}</p>
-        </li>
-      ))
-    }
+    {articles.map((a, i) => <ArticleEntry article={a} eager={i === 0} />)}
   </ul>
   <p><a href="/">← 記事一覧へ</a></p>
 </Base>

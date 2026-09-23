@@ -142,6 +142,21 @@ const imageUrl = image ? new URL(image.src, Astro.site).href : undefined;
       article .entries li { margin-bottom: 0; }
       .entries h2 { border: 0; margin: 0 0 0.25rem; font-size: 1.0625rem; }
       .entries h2 a { text-decoration: none; }
+      /* 一覧の 1 項目（components/ArticleEntry.astro）。左にアイキャッチの縮小、右にタイトルと日付。
+         画像は 1200×630 をそのまま縮めて使う（1 枚 45〜60 KB。2 件目以降は画面に近づいてから読む）。
+         行の高さを auto 1fr にするのは、サムネイルの方が背が高いとき、余った高さを日付の行の下に
+         寄せるため（指定しないと 2 行に分けて足され、タイトルが 1 行だと日付が下に離れる）。
+         列の最小幅を 0 にするのは、区切りの無い長い英単語や URL で列が広がり、画像ごと
+         画面の外へはみ出すのを防ぐため（1fr の最小値は中身の最小幅） */
+      .entry { display: grid; grid-template-columns: 11rem minmax(0, 1fr); grid-template-rows: auto 1fr; grid-template-areas: "thumb title" "thumb meta"; column-gap: 1rem; align-items: start; }
+      .entry-thumb { grid-area: thumb; display: block; }
+      .entry-thumb img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 4px; }
+      .entry-title { grid-area: title; overflow-wrap: anywhere; }
+      .entry-meta { grid-area: meta; margin: 0; }
+      /* 狭い画面では横に並べると字が細く折れるので、画像をタイトルの上に置く */
+      @media (max-width: 36rem) {
+        .entry { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; grid-template-areas: "thumb" "title" "meta"; row-gap: 0.5rem; }
+      }
       .disclosure { margin-top: 3rem; padding: 0.875rem 1rem; border-left: 3px solid var(--line); color: var(--muted); font-size: 0.8125rem; }
     </style>
   </body>

@@ -1,0 +1,51 @@
+---
+/** 記事一覧の 1 項目（アイキャッチのサムネイル + タイトル + 日付と注目度）。
+ *
+ * **トップ（index.astro）とタグ別一覧（tags/[tag].astro）の両方がこれを使う。**
+ * 見た目をページごとに書くと、片方だけ直して食い違う。
+ *
+ * 画像は M11 で作ったアイキャッチ（`pages/og/[slug].png.ts` がビルド時に書き出す）。
+ * 一覧に並ぶのは公開記事だけなので、画像も公開記事のものしか参照しない。
+ */
+import { type Article, formatDate } from "../lib/articles";
+import { OG_HEIGHT, OG_WIDTH, ogImagePath } from "../lib/og";
+import { scoreUnit, sourceLabel } from "../lib/sources";
+
+interface Props {
+  article: Article;
+  /** 画面の上のほうに出る項目か。先頭の項目だけ先に（優先して）読み込み、残りは画面に近づいてから読む。
+   * 狭い画面では先頭の画像が幅いっぱいに出て、最大の描画要素（LCP）になりやすい */
+  eager?: boolean;
+}
+const { article, eager = false } = Astro.props;
+const d = article.data;
+const href = `/articles/${article.id}/`;
+---
+
+<li class="entry">
+  {
+    /* **画像のリンクは読み上げとキーボードから外す。** 同じ記事へのリンクがタイトルにもあり、
+       alt="" の画像だけのリンクは読み上げでリンク名が無くなる
+       （https://www.w3.org/WAI/tutorials/images/functional/ ）。マウスやタップでは
+       画像を押しても記事に飛べる。aria-hidden の中にフォーカスできる要素を残さないよう
+       tabindex="-1" を併せて付ける（axe の aria-hidden-focus はこの形を成功例に挙げている
+       https://dequeuniversity.com/rules/axe/4.10/aria-hidden-focus ）。
+       alt が空なのは、画像の文字がすぐ隣のタイトルと同じだから */
+  }
+  <a class="entry-thumb" href={href} aria-hidden="true" tabindex="-1">
+    <img
+      src={ogImagePath(article.id)}
+      width={OG_WIDTH}
+      height={OG_HEIGHT}
+      alt=""
+      loading={eager ? "eager" : "lazy"}
+      fetchpriority={eager ? "high" : "auto"}
+      decoding="async"
+    />
+  </a>
+  <h2 class="entry-title"><a href={href}>{d.title}</a></h2>
+  <p class="meta entry-meta">
+    {formatDate(d.publishedAt)} ・ {sourceLabel(d.source)} {d.score}{" "}
+    {scoreUnit(d.source)} / {d.comments} コメント
+  </p>
+</li>

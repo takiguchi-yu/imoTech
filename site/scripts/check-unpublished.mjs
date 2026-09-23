@@ -79,6 +79,33 @@ for (const rel of ogFiles) {
   }
 }
 
+// ページの HTML 全体（トップ・タグ別一覧・記事・about など）。**許可リスト方式で見る。**
+// 一覧が公開判定（publishedArticles）を通らなくなった場合、未公開記事のタイトルとリンクが
+// トップに出る。個々のページを名指しで見るだけだと、ページが増えたり形が変わったりしたときに漏れる。
+// 未公開記事の slug（ファイル名）が、どこかの HTML に 1 つでも出たら落とす
+const unpublishedSlugs = files
+  .filter((f) => {
+    const raw = readFileSync(join(ARTICLES, f), "utf8");
+    const body = raw.startsWith("---\n") ? raw.slice(4).split("\n---\n").slice(1).join("\n---\n") : raw;
+    return imoOf(body) === null;
+  })
+  .map((f) => f.replace(/\.md$/, ""));
+const htmlFiles = readdirSync(DIST, { recursive: true })
+  .map(String)
+  .filter((rel) => rel.endsWith(".html"));
+for (const rel of htmlFiles) {
+  const html = readFileSync(join(DIST, rel), "utf8");
+  for (const slug of unpublishedSlugs) {
+    // slug の前後が区切りであることまで見る。部分一致だと、公開記事 `X-part2` へのリンクを
+    // 未公開の `X` の漏れと誤判定し、正しい状態でデプロイが止まる
+    const esc = slug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`(?<![\\w-])${esc}(?![\\w-])`).test(html)) {
+      console.error(`::error file=${join(DIST, rel)}::imo 未記入の記事 ${slug} がこのページに出ている（タイトルやリンクが漏れうる）`);
+      leaked += 1;
+    }
+  }
+}
+
 if (leaked > 0) {
   console.error(`\n${leaked} 件の漏れを検出しました。`);
   process.exit(1);

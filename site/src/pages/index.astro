@@ -1,7 +1,7 @@
 ---
+import ArticleEntry from "../components/ArticleEntry.astro";
 import Base from "../layouts/Base.astro";
-import { allTags, formatDate, publishedArticles } from "../lib/articles";
-import { scoreUnit, sourceLabel } from "../lib/sources";
+import { allTags, publishedArticles } from "../lib/articles";
 
 const articles = await publishedArticles();
 const tags = allTags(articles);
@@ -34,16 +34,8 @@ const tags = allTags(articles);
       <p class="meta">まだ記事がありません。</p>
     ) : (
       <ul class="entries">
-        {articles.map((a) => (
-          <li>
-            <h2>
-              <a href={`/articles/${a.id}/`}>{a.data.title}</a>
-            </h2>
-            <p class="meta">
-              {formatDate(a.data.publishedAt)} ・ {sourceLabel(a.data.source)} {a.data.score}{" "}
-              {scoreUnit(a.data.source)} / {a.data.comments} コメント
-            </p>
-          </li>
+        {articles.map((a, i) => (
+          <ArticleEntry article={a} eager={i === 0} />
         ))}
       </ul>
     )
