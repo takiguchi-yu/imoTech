@@ -497,7 +497,10 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
     if notion_failed and not notion_ok:
         _p(
             f"Notion への投入が {len(notion_failed)} 件すべて失敗しました。"
-            "NOTION_TOKEN / NOTION_DATABASE_ID とインテグレーションの接続を確認してください。",
+            "NOTION_TOKEN / NOTION_DATABASE_ID とインテグレーションの接続を確認してください。"
+            "上の [warn] に列の名前が出ていれば、DB の列名がコードと食い違っています。"
+            "`notion-setup` で揃えてから、もう一度 compose を実行してください"
+            "（この回の候補は処理済みになっていません。README の「コードを更新したら」）。",
             err=True,
         )
         return 1
@@ -875,7 +878,8 @@ def _notion_patch_existing(settings: Settings, args: argparse.Namespace) -> int:
                 # 足さずに改名する（notion.py の RENAMED_PROPS / タイトル列）
                 _p(f"改名: {old_name!r} → {spec['name']!r}（列の値はそのまま残る）")
         _p(f"追加するプロパティ: {len(missing)} 件 {sorted(missing)}")
-        for old_name, why in sorted(unrenamed_old_props(existing).items()):
+        leftover = unrenamed_old_props(existing)
+        for old_name, why in sorted(leftover.items()):
             # 黙って残すと、値が旧名の列に取り残されたまま新しい列が空で並ぶ
             _p(
                 f"★ 旧名の列 {old_name!r} は改名しません（{why}）。"
@@ -900,7 +904,10 @@ def _notion_patch_existing(settings: Settings, args: argparse.Namespace) -> int:
             return 1
 
         if not missing and not rename:
-            _p("スキーマは既に揃っています。何もしません。")
+            if leftover:
+                _p("設計書の列は揃っています。★ の旧名の列だけが残っています（何もしません）。")
+            else:
+                _p("スキーマは既に揃っています。何もしません。")
             return 0
 
         payload = patch_properties_payload(existing)

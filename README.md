@@ -134,18 +134,43 @@ uv run imotech notion-setup             # 適用
 > `Discussion URL` / `Score` / `Comments` に改名され、`Source` 列が足される（改名表は
 > `src/imotech/notion.py` の `RENAMED_PROPS`）。どのソースの行かは `Source` で分かり、ソースを足しても
 > Notion の列は増えない。**改名前からあるページの `Source` は空欄のまま**なので、Source で絞り込むと漏れる。
+> 要るなら Notion の UI で空欄のページを選び、`hackernews` を一括で入れる（以前の版のソースは Hacker News だけだった）。
 
 #### コードを更新したら
 
-**列の名前や数が変わる版に更新したら、`compose` や `notion-sync` の前に `notion-setup` を 1 回実行する。**
-コードと DB の列名が食い違ったまま `compose` すると、Notion への投入が失敗する
-（記事の Markdown は書かれ、候補は処理済みになるので、あとで `notion-sync` で入れ直す）。
+**更新を main に push したら、次の `daily.yml`（06:17 JST）より前に `notion-setup` を実行する。**
+`compose` を実際に打つのは Actions なので、ローカルで打たなくても食い違いは起きる。
+列の名前や数が変わらない版なら「何もしません」と出るだけなので、**更新のたびに `--dry-run` を打てばよい。**
 
 ```bash
-uv run imotech notion-setup --dry-run   # 改名・追加されるものを確認
+uv run imotech notion-setup --dry-run   # 改名・追加されるものを確認（差分が無ければ「何もしません」）
 uv run imotech notion-setup
-uv run imotech notion-sync              # 食い違っていたあいだに投入し損ねた分を入れる（重複はしない）
 ```
+
+**間に合わなかったら:** コードと DB の列名が食い違ったまま `compose` すると、Notion への投入が失敗する。
+ログの出方で、やることが 2 通りに分かれる。
+
+- **全件が失敗した**（ログに「Notion への投入が N 件すべて失敗しました」。`daily.yml` は失敗で終わり、Issue が立つ）
+  → `compose` が非 0 で終わるので、Actions は**何も commit していない**。その回の候補は main 上で
+  `pending` のまま残っているので、揃えてから回し直せばそのまま拾われる（Gemini はもう一度呼ばれる）。
+
+  ```bash
+  uv run imotech notion-setup
+  gh workflow run daily.yml
+  ```
+
+- **一部だけ失敗した**（ログに `[warn] Notion への投入に失敗` があるが、`daily.yml` は成功）
+  → 記事の Markdown と候補の状態は commit されている。取り込んでから、投入し損ねた分だけを入れ直す。
+
+  ```bash
+  git pull
+  uv run imotech notion-setup
+  uv run imotech notion-sync   # URL Hash で判定するので重複しない
+  git add data/candidates.jsonl && git commit -m "chore: notion-sync で投入し直した分を記録する" && git push
+  ```
+
+  `notion-sync` は投入したページの id を `data/candidates.jsonl` に書き戻す。push しないと、次の Actions の
+  実行が持っている記録とずれる。
 
 #### 日々の運用
 

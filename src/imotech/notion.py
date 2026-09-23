@@ -189,8 +189,6 @@ def build_properties(draft: ArticleDraft, *, collected_at: datetime | None = Non
         PROP_STATUS: {"select": {"name": STATUS_DRAFT}},
         PROP_URL_HASH: {"rich_text": _rich_text(draft.url_hash)},
         PROP_SLUG: {"rich_text": _rich_text(draft.slug)},
-        # **ソースごとに列を増やさない。** 列は意味ごとに 1 つで、
-        # どのソースの行かは Source で分かる。Select に無い名前を送ると Notion が
         PROP_SOURCE_URL: {"url": draft.source_url},
         PROP_DISCUSSION_URL: {"url": draft.discussion_url},
         PROP_HATENA_URL: {"url": draft.hatena_url},

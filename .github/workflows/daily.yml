@@ -126,6 +126,10 @@ jobs:
             - **Notion を開けない**（ログに「Notion を使う設定なのに開けませんでした」）
               → `NOTION_DATABASE_ID` の誤り、トークン失効、インテグレーションが DB に未接続。
               Markdown は書けているので、急ぐなら `## imo` に直接書けば公開できる
+            - **Notion への投入が全件失敗**（ログに「Notion への投入が N 件すべて失敗しました」）
+              → 多くは DB の列名がコードと食い違っている（列の名前が変わる版を push したのに
+              `notion-setup` をしていない）。`uv run imotech notion-setup` のあとに
+              `gh workflow run daily.yml`。何も commit されていないので、その回の候補は `pending` のまま拾われる
             - **Notion のブロック上限**（Free は生涯 1,000 ブロック）
               → 課金するか、以降は Markdown に直接書く運用に切り替える
             - **`git pull --rebase` が競合**
