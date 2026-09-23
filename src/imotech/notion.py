@@ -137,10 +137,12 @@ def build_blocks(draft: ArticleDraft) -> list[dict]:
     ]
     for line in draft.digest:
         blocks += _bullets(line)
-    blocks.append(_heading(2, "議論の論調"))
-    for point in draft.discourse:
-        blocks.append(_heading(3, point.point))
-        blocks += [_paragraph(chunk) for chunk in _split_long(point.detail)]
+    # 反応が無いソースの記事では論調が空になる。空の見出しを作らない
+    if draft.discourse:
+        blocks.append(_heading(2, "議論の論調"))
+        for point in draft.discourse:
+            blocks.append(_heading(3, point.point))
+            blocks += [_paragraph(chunk) for chunk in _split_long(point.detail)]
     if draft.glossary:
         blocks.append(_heading(2, "用語"))
         for entry in draft.glossary:

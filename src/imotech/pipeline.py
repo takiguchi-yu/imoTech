@@ -7,10 +7,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from .models import Candidate, CandidateState, SkipReason
+from .models import Candidate, CandidateState, SkipReason, Thresholds
 
 
 @dataclass(frozen=True)
@@ -37,13 +38,18 @@ def select(
     matured: list[Candidate],
     *,
     now: datetime,
-    min_score: int,
-    min_comments: int,
+    thresholds: Mapping[str, Thresholds],
+    default_thresholds: Thresholds,
     max_drafts: int,
     max_age_hours: int,
     evaluated: set[str] | None = None,
 ) -> Selection:
     """閾値を満たす上位 max_drafts 件を選ぶ。
+
+    **閾値はソースごとに引く。** Hacker News は議論そのものが目的の場なので
+    コメントが数百付くが、記事プラットフォーム（Qiita など）ではほぼ 0 件で、
+    同じ閾値を当てると片方が 1 件も通らない。`thresholds` に無いソースの候補
+    （設定から外したソースの古い候補など）は `default_thresholds` で判定する。
 
     score_at_evaluate / comments_at_evaluate に現在値が入っている前提。収集時の値では
     「まだ誰も反応していない」段階を見ることになり判定に使えない。
@@ -63,7 +69,8 @@ def select(
         comments = (
             c.comments_at_evaluate if c.comments_at_evaluate is not None else c.comments_at_collect
         )
-        if score >= min_score and comments >= min_comments:
+        t = thresholds.get(c.ref.source, default_thresholds)
+        if score >= t.min_score and comments >= t.min_comments:
             passing.append(c)
         else:
             failing.append(c)

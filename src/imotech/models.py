@@ -70,6 +70,22 @@ class Engagement:
 
 
 @dataclass(frozen=True)
+class Thresholds:
+    """「話題になった」と言える下限。
+
+    **ソースによって桁が違う。** Hacker News は議論そのものが目的の場なので
+    コメントが数百付くが、Qiita のような記事プラットフォームでは記事に
+    コメントがほとんど付かない（実測で 82% が 0 件）。同じ閾値を当てると
+    片方が 1 件も通らないので、ソースごとに持てるようにしてある。
+
+    判定はここではなく `pipeline.select` が行う。ここは値だけを持つ。
+    """
+
+    min_score: int
+    min_comments: int
+
+
+@dataclass(frozen=True)
 class Story:
     """ソースに投稿された 1 件の話題。記事を書く単位。
 
@@ -83,6 +99,14 @@ class Story:
     engagement: Engagement
     created_at: datetime
     discussion_url: str = ""
+    author: str | None = None
+    """投稿者のハンドル。**PII なので LLM に渡す前に伏せる**。
+
+    Hacker News では元記事は第三者のブログなので URL に投稿者名は入らないが、
+    Qiita のような記事プラットフォームでは **`url` 自体に著者のハンドルが入る**
+    （`qiita.com/<user_id>/items/<id>`）。反応の投稿者一覧だけを見ていると
+    著者が伏せ字から漏れるので、Story 側でも持つ。
+    """
 
 
 @dataclass
@@ -115,7 +139,10 @@ class Reaction:
     LLM へ渡してよいのは anonymize() を通した AnonymizedReaction だけ。
     """
 
-    comment_id: int
+    comment_id: str
+    """ソース内で一意なコメント ID。**数値とは限らない**（Qiita は 20 桁の 16 進）ので
+    `SourceRef.id` と同じく文字列で持つ。"""
+
     author: str | None
     text: str
     depth: int

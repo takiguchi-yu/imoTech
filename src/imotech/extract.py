@@ -138,7 +138,7 @@ class ArticleFetcher:
 
     # --- 取得 -------------------------------------------------------------
 
-    def fetch(self, url: str) -> ArticleSource | None:
+    def fetch(self, url: str, extra_handles: frozenset[str] = frozenset()) -> ArticleSource | None:
         """本文を返す。取得できなければ None（呼び出し側が skipped にする）。
 
         返す text は必ず scrub 済み。元記事に含まれるメールアドレスや
@@ -160,17 +160,23 @@ class ArticleFetcher:
             output_format="txt",
         )
         if body and body.strip():
-            return self._as_source(body.strip(), "trafilatura")
+            return self._as_source(body.strip(), "trafilatura", extra_handles)
 
         og = _og_description(_decode(raw))
         if og:
-            return self._as_source(og, "og:description")
+            return self._as_source(og, "og:description", extra_handles)
         print(f"  [info] 本文も og:description も取れませんでした: {final_url}", flush=True)
         return None
 
-    def _as_source(self, text: str, via: str) -> ArticleSource:
+    def _as_source(self, text: str, via: str, extra_handles: frozenset[str]) -> ArticleSource:
         # 元記事側にも PII は載る。実データでメールアドレスが残っていた。
-        cleaned = scrub(text, frozenset(), self.profile_url_res)
+        #
+        # **記事プラットフォームでは元記事＝著者本人のページ**なので、本文に自分の
+        # ID を書いていることがある（自己紹介、「筆者 <id>」、自作リポジトリの URL）。
+        # Hacker News では元記事が第三者のブログだったので起きなかった経路。
+        # スレッド参加者のハンドルは渡さない（本文の普通の語を壊すため）が、
+        # 著者だけは伏せる。
+        cleaned = scrub(text, frozenset(h for h in extra_handles if h), self.profile_url_res)
         return ArticleSource(text=cleaned[: self.max_chars], via=via)
 
     def _get(self, url: str) -> tuple[bytes, str] | None:

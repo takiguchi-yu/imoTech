@@ -26,6 +26,18 @@ jobs:
     name: 収集と生成
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # **ソースの設定は job レベルに置く。** collect と compose の両方に効かせる
+    # 必要があり、片方だけに入れると「収集は HN・選別は Qiita」のような噛み合わない
+    # 状態になって、エラーも出ないまま毎日 0 本になる
+    env:
+      # 使えるのは hackernews と qiita（src/imotech/sources/registry.py）。
+      # 増やすときはここを "hackernews,qiita" にする（ここ 1 箇所でよい）
+      IMOTECH_SOURCES: hackernews
+      # 1 回の実行でソースに問い合わせる候補の上限。
+      # **qiita を足すときは 40 以下に下げること** — Qiita は非認証で 60 req/h/IP、
+      # collect の検索（最大 3 ページ）と compose の問い合わせが同じ枠を食う。
+      # しかも Actions の IP は他の利用者と共有する
+      IMOTECH_MAX_PROBES_PER_RUN: "60"
     steps:
       - uses: actions/checkout@v4
         with:

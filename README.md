@@ -229,13 +229,14 @@ uv run imotech status   # imo 未記入と判定されている記事が挙が�
 |---|---|---|
 | `IMOTECH_CANDIDATES_PATH` | `data/candidates.jsonl` | 候補ストアの場所。ローカル検証で本番ストアを汚さないために使う |
 | `IMOTECH_ARTICLES_DIR` | `site/src/content/articles` | 生成した記事の Markdown の書き出し先 |
-| `IMOTECH_SOURCES` | `hackernews` | 使うソース。カンマ区切りで複数指定すると両方から集める。**使える名前は [`src/imotech/sources/registry.py`](./src/imotech/sources/registry.py) の `_FACTORIES`（現在は `hackernews` のみ）** |
+| `IMOTECH_SOURCES` | `hackernews` | 使うソース。カンマ区切りで複数指定すると両方から集める。**使える名前は `hackernews` と `qiita`**（実体は [`src/imotech/sources/registry.py`](./src/imotech/sources/registry.py) の `_FACTORIES`） |
 | `IMOTECH_MATURATION_HOURS` | 24 | 収集からこの時間が経った候補だけを評価する |
-| `IMOTECH_MIN_SCORE` | 100 | 注目度のスコア下限 |
-| `IMOTECH_MIN_COMMENTS` | 30 | コメント数の下限 |
+| `IMOTECH_MIN_SCORE` | 100 | 注目度のスコア下限。**ソース固有の既定を持たないソースにだけ効く**（下記） |
+| `IMOTECH_MIN_COMMENTS` | 30 | コメント数の下限。同上 |
+| `IMOTECH_SOURCE_THRESHOLDS` | なし | ソースごとの閾値を JSON で上書きする。例: `{"qiita": {"min_score": 50, "min_comments": 0}}` |
 | `IMOTECH_MAX_DRAFTS_PER_RUN` | 5 | 1 回の実行で作る下書きの上限 |
 | `IMOTECH_MAX_AGE_HOURS` | 96 | これを過ぎて処理されなかった候補は打ち切る |
-| `IMOTECH_MAX_PROBES_PER_RUN` | 60 | 1 回の実行で HN に問い合わせる件数の上限 |
+| `IMOTECH_MAX_PROBES_PER_RUN` | 60 | 1 回の実行でソースに問い合わせる候補の上限。**Qiita を使うときは 40 以下に下げる**（下記） |
 | `IMOTECH_PROBE_BUDGET` | 300 | 問い合わせ全体の予算（秒）。超えたら打ち切る |
 | `IMOTECH_MAX_REACTIONS` | 80 | Gemini に渡す反応の上限 |
 | `IMOTECH_MAX_ARTICLE_CHARS` | 8000 | Gemini に渡す元記事本文の上限 |
@@ -272,6 +273,42 @@ gh workflow run daily.yml      # 収集と生成
 gh workflow run publish.yml    # 承認の反映
 gh run watch
 ```
+
+### ソースを増やすとき
+
+使えるのは `hackernews` と `qiita`（実体は [`src/imotech/sources/registry.py`](./src/imotech/sources/registry.py) の `_FACTORIES`）。
+
+**ローカルで試す**（本番の候補ストアを汚さない）:
+
+```bash
+IMOTECH_SOURCES=hackernews,qiita \
+IMOTECH_CANDIDATES_PATH=/tmp/try.jsonl \
+  uv run imotech collect
+```
+
+**本番（毎朝の Actions）で有効にする**には [`daily.yml`](./.github/workflows/daily.yml) の
+`jobs.pipeline.env` を 1 行変える。**ここ 1 箇所でよい** — `collect` と `compose` の両方に
+効かせる必要があるので、ステップではなく job レベルに置いてある。
+
+```yaml
+    env:
+      IMOTECH_SOURCES: hackernews,qiita   # ← ここ
+      IMOTECH_MAX_PROBES_PER_RUN: "40"    # ← Qiita を足すなら下げる（下記）
+```
+
+#### Qiita を足すときの注意
+
+| | 中身 |
+|---|---|
+| **レート** | 非認証で **60 req/h/IP**。`collect` の検索（最大 3 ページ）と `compose` の候補ごとの問い合わせが**同じ枠を食う**。`IMOTECH_MAX_PROBES_PER_RUN` を既定の 60 のままにすると超える |
+| **共有 IP** | GitHub Actions の IP は他の利用者と共有する。自分が使っていなくても枯れていることがある |
+| **枯れたとき** | その実行では問い合わせを止め、候補は `pending` のまま次回に回る（データは壊れない）。ログに回復時刻が出る |
+| **閾値** | Qiita は記事にコメントがほぼ付かない（実測で 82% が 0 件）ので、専用の閾値（LGTM 30 以上／コメント数は見ない）を持っている。変えるなら `IMOTECH_SOURCE_THRESHOLDS` |
+| **記事の形** | 反応が 0 件の記事は**議論の論調の節を持たない**（要旨 + imo + 用語になる） |
+| **未対応** | アクセストークンによる 1000 req/h への引き上げは、`Qiita(token=...)` まで実装済みだが**設定から渡す配線がまだ無い** |
+
+**サイトの自己紹介文は「英語圏」のまま**（[`site/src/pages/about.astro`](./site/src/pages/about.astro) ほか）。
+Qiita を本番で有効にするなら、読者向けの説明も併せて直すこと。
 
 ### Secrets の登録
 
@@ -341,9 +378,13 @@ Issue のタイトルは**最初に失敗したワークフロー名**で固定�
 Issue が立っていないのに記事が増えていないなら、多くは正常である。
 
 - **熟成待ち** — 収集から 24 時間（`IMOTECH_MATURATION_HOURS`）経たないと記事化の対象にならない
-- **閾値未達** — points 100 / comments 30（`IMOTECH_MIN_SCORE` / `IMOTECH_MIN_COMMENTS`）を
-  満たす候補がない日は、薄い記事を作らずに 0 本で終わる
+- **閾値未達** — 閾値を満たす候補がない日は、薄い記事を作らずに 0 本で終わる。
+  **閾値はソースごとに違う**（Hacker News は score 100 / comments 30、Qiita は score 30 /
+  comments 0）。compose のログに使った閾値が出るので、そこを見る
 - **imo 未記入** — 記事は書き出されているが、所感を書くまでサイトには出ない
+- **Qiita のレート枯渇** — `[warn] Qiita のレート上限（非認証 60 req/h）に達しました` が
+  ログに出ていたら、その実行では現在値を取れていない。候補は `pending` のまま次回に回るので
+  **放っておけば直る**。毎回ここで止まるなら `IMOTECH_MAX_PROBES_PER_RUN` を下げる
 
 ```bash
 uv run imotech stats                          # 候補の状態と分布

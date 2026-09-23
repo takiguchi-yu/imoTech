@@ -21,21 +21,26 @@ def test_HTMLタグと実体参照が平文になる():
 
 def test_投稿者名が出力に残らない():
     rs = [_r(1, "prologic", "hello"), _r(2, "x", "As prologic noted, it works")]
-    out = anonymize(rs, limit=10, profile_url_res=[])
+    out = anonymize(rs, limit=10, profile_url_res=[], extra_handles=frozenset())
     joined = " ".join(a.text for a in out)
     assert "prologic" not in joined
     assert PLACEHOLDER in joined
 
 
 def test_アットマーク付きメンションが消える():
-    out = anonymize([_r(1, "a", "@someuser is wrong")], limit=10, profile_url_res=[])
+    out = anonymize(
+        [_r(1, "a", "@someuser is wrong")], limit=10, profile_url_res=[], extra_handles=frozenset()
+    )
     assert "@someuser" not in out[0].text
     assert PLACEHOLDER in out[0].text
 
 
 def test_メールアドレスが消える():
     out = anonymize(
-        [_r(1, "a", "reach me at foo.bar+x@example.co.uk please")], limit=10, profile_url_res=[]
+        [_r(1, "a", "reach me at foo.bar+x@example.co.uk please")],
+        limit=10,
+        profile_url_res=[],
+        extra_handles=frozenset(),
     )
     assert "example.co.uk" not in out[0].text
     assert EMAIL_PLACEHOLDER in out[0].text
@@ -44,13 +49,15 @@ def test_メールアドレスが消える():
 def test_英単語と同じハンドルは本文を壊さない():
     # 実データで what というハンドルがいて英文中の what が全滅した事故の回帰テスト
     rs = [_r(1, "what", "irrelevant"), _r(2, "b", "should know what you do here")]
-    out = anonymize(rs, limit=10, profile_url_res=[])
+    out = anonymize(rs, limit=10, profile_url_res=[], extra_handles=frozenset())
     assert "should know what you do here" in " ".join(a.text for a in out)
 
 
 def test_AnonymizedReactionにauthorフィールドが無い():
     # 型の上で投稿者を運べないことを担保する。llm.py はこの型しか受け取らない
-    a = anonymize([_r(1, "someone", "text")], limit=10, profile_url_res=[])[0]
+    a = anonymize(
+        [_r(1, "someone", "text")], limit=10, profile_url_res=[], extra_handles=frozenset()
+    )[0]
     assert not hasattr(a, "author")
 
 
@@ -60,19 +67,27 @@ def test_返信の多い順に選ばれ元の並びに戻る():
         _r(2, "b", "second", depth=0, replies=9),
         _r(3, "c", "third", depth=0, replies=5),
     ]
-    out = anonymize(rs, limit=2, profile_url_res=[])
+    out = anonymize(rs, limit=2, profile_url_res=[], extra_handles=frozenset())
     # 返信数で second と third が選ばれ、出力は元の並び順（second → third）
     assert [a.text for a in out] == ["second", "third"]
     assert [a.label for a in out] == ["C1", "C2"]
 
 
 def test_返信数と階層は残る():
-    out = anonymize([_r(1, "a", "t", depth=3, replies=7)], limit=10, profile_url_res=[])
+    out = anonymize(
+        [_r(1, "a", "t", depth=3, replies=7)],
+        limit=10,
+        profile_url_res=[],
+        extra_handles=frozenset(),
+    )
     assert (out[0].depth, out[0].reply_count) == (3, 7)
 
 
 def test_空文字になった反応は落とす():
-    assert anonymize([_r(1, "a", "<p></p>")], limit=10, profile_url_res=[]) == []
+    assert (
+        anonymize([_r(1, "a", "<p></p>")], limit=10, profile_url_res=[], extra_handles=frozenset())
+        == []
+    )
 
 
 # --- URL の扱い（レビューで見つかった漏れと誤検出の回帰テスト）--------------
@@ -84,6 +99,7 @@ def test_URLのパス区画に一致するハンドルは伏せる():
         [_r(1, "DanMcInerney", "see https://github.com/DanMcInerney/tool")],
         limit=5,
         profile_url_res=[],
+        extra_handles=frozenset(),
     )
     assert "DanMcInerney" not in out[0].text
     assert "github.com" in out[0].text
@@ -95,13 +111,17 @@ def test_URLの一部に偶然一致しても壊さない():
         [_r(1, "newsletter", "https://e.com/p?ref=newsletter.com is fine")],
         limit=5,
         profile_url_res=[],
+        extra_handles=frozenset(),
     )
     assert "?ref=newsletter.com" in out[0].text
 
 
 def test_通常のURLは温存する():
     out = anonymize(
-        [_r(1, "someone", "source: https://example.com/a/b?x=1")], limit=5, profile_url_res=[]
+        [_r(1, "someone", "source: https://example.com/a/b?x=1")],
+        limit=5,
+        profile_url_res=[],
+        extra_handles=frozenset(),
     )
     assert "https://example.com/a/b?x=1" in out[0].text
 
@@ -113,6 +133,7 @@ def test_プロフィールURLは伏せる():
         [_r(1, "a", "see https://news.ycombinator.com/user?id=patio11")],
         limit=5,
         profile_url_res=[PROFILE_URL_RE],
+        extra_handles=frozenset(),
     )
     assert "patio11" not in out[0].text
     assert PLACEHOLDER in out[0].text
@@ -120,7 +141,10 @@ def test_プロフィールURLは伏せる():
 
 def test_ユーザー名を含むURLはリンクごと伏せる():
     out = anonymize(
-        [_r(1, "a", "read https://medium.com/@someone/article")], limit=5, profile_url_res=[]
+        [_r(1, "a", "read https://medium.com/@someone/article")],
+        limit=5,
+        profile_url_res=[],
+        extra_handles=frozenset(),
     )
     assert "@someone" not in out[0].text
     assert "[リンク]" in out[0].text
@@ -128,7 +152,10 @@ def test_ユーザー名を含むURLはリンクごと伏せる():
 
 def test_文頭で大文字にしたハンドルも伏せる():
     out = anonymize(
-        [_r(1, "alice", "x"), _r(2, "b", "Alice makes a good point")], limit=5, profile_url_res=[]
+        [_r(1, "alice", "x"), _r(2, "b", "Alice makes a good point")],
+        limit=5,
+        profile_url_res=[],
+        extra_handles=frozenset(),
     )
     assert "Alice" not in " ".join(a.text for a in out)
 
@@ -139,6 +166,7 @@ def test_4文字未満のハンドルは伏せない():
         [_r(1, "ab", "x"), _r(2, "b", "ab initio means from the start")],
         limit=5,
         profile_url_res=[],
+        extra_handles=frozenset(),
     )
     assert "ab initio" in " ".join(a.text for a in out)
 
@@ -146,7 +174,10 @@ def test_4文字未満のハンドルは伏せない():
 def test_投稿者の個人ドメインは伏せる():
     # https://<handle>.ca/... のような本人のサイト。PII の信号が強い
     out = anonymize(
-        [_r(1, "srcreigh", "see https://srcreigh.ca/posts/kata/")], limit=5, profile_url_res=[]
+        [_r(1, "srcreigh", "see https://srcreigh.ca/posts/kata/")],
+        limit=5,
+        profile_url_res=[],
+        extra_handles=frozenset(),
     )
     assert "srcreigh" not in out[0].text
     assert "/posts/kata/" in out[0].text
@@ -154,7 +185,10 @@ def test_投稿者の個人ドメインは伏せる():
 
 def test_wwwつきの個人ドメインも伏せる():
     out = anonymize(
-        [_r(1, "srcreigh", "see https://www.srcreigh.ca/x")], limit=5, profile_url_res=[]
+        [_r(1, "srcreigh", "see https://www.srcreigh.ca/x")],
+        limit=5,
+        profile_url_res=[],
+        extra_handles=frozenset(),
     )
     assert "srcreigh" not in out[0].text
 
@@ -167,7 +201,7 @@ def test_元記事URLのドメインが投稿者名と一致したら伏せる()
     from imotech.anonymize import scrub_url
 
     rs = [_r(1, "buchodi", "There are specific details about how it works")]
-    assert scrub_url("https://www.buchodi.com/chatgpt-ad-collector/", rs) == (
+    assert scrub_url("https://www.buchodi.com/chatgpt-ad-collector/", rs, frozenset()) == (
         "https://www.[ユーザー名].com/chatgpt-ad-collector/"
     )
 
@@ -177,7 +211,7 @@ def test_無関係なドメインの元記事URLは温存する():
 
     rs = [_r(1, "someone", "text")]
     url = "https://example.com/posts/a?x=1"
-    assert scrub_url(url, rs) == url
+    assert scrub_url(url, rs, frozenset()) == url
 
 
 def test_タイトルのメールアドレスは伏せるがハンドル衝突では壊さない():
@@ -185,8 +219,8 @@ def test_タイトルのメールアドレスは伏せるがハンドル衝突�
 
     rs = [_r(1, "story", "text")]
     # 見出しを素のハンドル衝突で壊すと害が大きいので、そこは伏せない
-    assert scrub_title("Rust's async story", rs, []) == "Rust's async story"
-    assert "[メールアドレス]" in scrub_title("Contact a@b.com for details", rs, [])
+    assert scrub_title("Rust's async story", rs, [], frozenset()) == "Rust's async story"
+    assert "[メールアドレス]" in scrub_title("Contact a@b.com for details", rs, [], frozenset())
 
 
 def test_build_user_promptが匿名化済みのURLを使う():

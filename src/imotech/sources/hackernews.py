@@ -163,6 +163,7 @@ def _story_from_hit(hit: dict) -> Story | None:
         ),
         created_at=datetime.fromtimestamp(int(created), tz=UTC),
         discussion_url=discussion_url(object_id),
+        author=hit.get("author") or None,
     )
 
 
@@ -182,6 +183,7 @@ def _story_from_item(item: dict) -> Story | None:
         ),
         created_at=datetime.fromtimestamp(int(created), tz=UTC),
         discussion_url=discussion_url(item_id),
+        author=item.get("author") or None,
     )
 
 
@@ -218,7 +220,7 @@ def _walk_comments(node: dict, depth: int = 0) -> list[Reaction]:
         if text:
             out.append(
                 Reaction(
-                    comment_id=int(child.get("id") or 0),
+                    comment_id=str(child.get("id") or ""),
                     author=child.get("author"),
                     text=text,
                     depth=depth,

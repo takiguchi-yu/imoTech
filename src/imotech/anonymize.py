@@ -176,43 +176,68 @@ def _scrub_in_url(url: str, handles: frozenset[str]) -> str:
     - https://github.com/DanMcInerney/repo → パス区画なので伏せる
     - https://srcreigh.ca/posts/x          → 先頭ホストラベルなので伏せる
     - https://e.com/p?ref=newsletter.com   → クエリ値の一部なので伏せない
+
+    **パス区画には短さ・頻出語の除外を当てない。** `_MIN_HANDLE_LEN` と `_COMMON_WORDS` は
+    「本文に素の語として現れたとき、人物への言及か普通の単語か区別できない」ための規則で、
+    URL のパス区画にはその曖昧さが無い。当ててしまうと、記事プラットフォームで
+    `qiita.com/abc/items/<id>` のように **URL 自体が著者を指す形**のときに伏せ字が抜ける
+    （Qiita には 3 文字の user_id も、英単語と同じ綴りの user_id も実在する）。
+    ホスト名側は誤爆しうる（`what.com` が人物とは限らない）ので、従来どおり除外を当てる。
     """
     for h in sorted(handles, key=len, reverse=True):
+        esc = re.escape(h)
+        # パス・クエリの 1 区画。区切り文字に挟まれていて曖昧さが無いので、
+        # 短いハンドル・英単語と同じ綴りのハンドルもここでは伏せる
+        url = re.sub(rf"(?<=[/=?&]){esc}(?=[/?&#]|$)", PLACEHOLDER, url, flags=re.IGNORECASE)
         if len(h) < _MIN_HANDLE_LEN or h.lower() in _COMMON_WORDS:
             continue
-        esc = re.escape(h)
-        # パス・クエリの 1 区画
-        url = re.sub(rf"(?<=[/=?&]){esc}(?=[/?&#]|$)", PLACEHOLDER, url, flags=re.IGNORECASE)
-        # ホスト名の先頭ラベル（www. の有無を許す）
+        # ホスト名の先頭ラベル（www. の有無を許す）。ここは普通のドメインに誤爆しうる
         url = re.sub(rf"(?<=://){esc}(?=\.)", PLACEHOLDER, url, flags=re.IGNORECASE)
         url = re.sub(rf"(?<=://www\.){esc}(?=\.)", PLACEHOLDER, url, flags=re.IGNORECASE)
     return url
 
 
-def handles_of(reactions: list[Reaction]) -> frozenset[str]:
-    """スレッドに実在する投稿者ハンドルの集合。"""
-    return frozenset(r.author for r in reactions if r.author)
+def handles_of(reactions: list[Reaction], extra_handles: frozenset[str]) -> frozenset[str]:
+    """伏せ字の対象になる投稿者ハンドルの集合。
+
+    スレッドの投稿者に加えて `extra_handles` を混ぜる。**記事の著者は反応に
+    現れないことがある**（Qiita で著者がコメントしていない場合など）ので、
+    呼び出し側が `Story.author` を渡す。
+    """
+    return frozenset(r.author for r in reactions if r.author) | {h for h in extra_handles if h}
 
 
-def scrub_url(url: str, reactions: list[Reaction]) -> str:
+def scrub_url(url: str, reactions: list[Reaction], extra_handles: frozenset[str]) -> str:
     """元記事の URL を匿名化する。
 
     ブログ主が自分の記事を HN に投稿してコメントもする、というのはよくある。
     その場合ドメイン名が投稿者ハンドルと一致し、URL をそのまま渡すと
     プロンプトに投稿者名が載る（実データで buchodi.com / buchodi を検出した）。
+
+    **記事プラットフォームでは URL そのものに著者名が入る**（Qiita の
+    `qiita.com/<user_id>/items/<id>`）。この場合、著者が 1 度もコメントして
+    いなくても伏せる必要があるため、`extra_handles` に `Story.author` を渡す。
+    **既定値を置いていない**のは、渡し忘れが静かに PII を残すため。
     """
-    return _scrub_in_url(url, handles_of(reactions))
+    return _scrub_in_url(url, handles_of(reactions, extra_handles))
 
 
 def scrub_title(
-    title: str, reactions: list[Reaction], profile_url_res: Sequence[re.Pattern[str]]
+    title: str,
+    reactions: list[Reaction],
+    profile_url_res: Sequence[re.Pattern[str]],
+    extra_handles: frozenset[str],
 ) -> str:
     """元記事のタイトルを匿名化する。
 
-    タイトルは公開された見出しなので、素のハンドル名との衝突で文章を壊すほうが
-    害が大きい。メールアドレス・@メンション・プロフィール URL だけを伏せる。
+    タイトルは公開された見出しなので、**スレッド参加者のハンドル**との衝突で文章を
+    壊すほうが害が大きい。そちらは伏せず、メールアドレス・@メンション・
+    プロフィール URL だけを伏せる。
+
+    一方 `extra_handles`（記事の著者）は伏せる。記事プラットフォームでは著者が
+    自分の ID をタイトルに書くことがあり、そこは衝突ではなく本人への言及である。
     """
-    return scrub(title, frozenset(), profile_url_res)
+    return scrub(title, frozenset(h for h in extra_handles if h), profile_url_res)
 
 
 def anonymize(
@@ -220,6 +245,7 @@ def anonymize(
     *,
     limit: int,
     profile_url_res: Sequence[re.Pattern[str]],
+    extra_handles: frozenset[str],
 ) -> list[AnonymizedReaction]:
     """反応を匿名化し、議論を呼んだ順に limit 件まで絞る。
 
@@ -230,7 +256,7 @@ def anonymize(
     整形で空になった反応は limit を数える前に落とす。あとから落とすとラベルが
     C1, C3, ... と飛び、limit 件に満たない件数しか返らない。
     """
-    handles = frozenset(r.author for r in reactions if r.author)
+    handles = handles_of(reactions, extra_handles)
 
     cleaned: list[tuple[int, Reaction, str]] = []
     for i, r in enumerate(reactions):

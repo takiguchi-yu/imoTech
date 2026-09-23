@@ -6,7 +6,15 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from imotech.cli import _apply_skips, build_parser, cmd_compose, cmd_publish, cmd_stats
+from imotech.cli import (
+    _apply_skips,
+    _format_thresholds,
+    _resolve_thresholds,
+    build_parser,
+    cmd_compose,
+    cmd_publish,
+    cmd_stats,
+)
 from imotech.config import Settings
 from imotech.llm import GenerationResult, LLMError
 from imotech.models import (
@@ -20,6 +28,7 @@ from imotech.models import (
     SkipReason,
     SourceRef,
     Story,
+    Thresholds,
 )
 from imotech.notion import NotionBlockLimitError, NotionError
 from imotech.render import IMO_PROMPT, set_imo, write_article
@@ -137,14 +146,21 @@ class _FakeFeed:
     def fetch_stories(self, **_kw) -> list[Story]:
         return []
 
+    #: 記事の著者。記事プラットフォーム（Qiita など）を模すときに差し替える
+    author: str | None = None
+    #: 元記事の URL。著者のハンドルを含む形にできる
+    url_template = "https://e.com/{id}"
+    title_template = "t"
+
     def fetch_reactions(self, ref: SourceRef) -> tuple[Story, list]:
         story = Story(
             ref=ref,
-            url=f"https://e.com/{ref.id}",
-            title="t",
+            url=self.url_template.format(id=ref.id),
+            title=self.title_template,
             engagement=Engagement(score=500, comments=200),
             created_at=datetime.now(UTC) - timedelta(hours=30),
             discussion_url=f"https://news.ycombinator.com/item?id={ref.id}",
+            author=self.author,
         )
         return story, []
 
@@ -154,6 +170,9 @@ def _fake_fetcher_class(outcomes: list | None):
     seq = list(outcomes) if outcomes is not None else None
 
     class _F:
+        #: fetch に渡された extra_handles の記録（PII の配線を見るため）
+        seen_handles: list = []
+
         def __init__(self, **_kw) -> None:
             pass
 
@@ -163,7 +182,10 @@ def _fake_fetcher_class(outcomes: list | None):
         def __exit__(self, *_a) -> bool:
             return False
 
-        def fetch(self, _url: str) -> ArticleSource | None:
+        def fetch(self, _url: str, extra_handles: frozenset[str] = frozenset()):
+            # 本物と同じく著者のハンドルを受け取る。渡された値は
+            # test_composeは著者のハンドルを本文の匿名化に渡す で確かめる
+            self.seen_handles.append(extra_handles)
             if seq is None:
                 return ArticleSource(text="本文" * 100, via="test")
             return seq.pop(0)
@@ -595,3 +617,230 @@ def test_publishはNotionの呼び出しが失敗したら1を返す(tmp_path, m
     assert "Notion の呼び出しに失敗しました" in capsys.readouterr().err
     # 例外で抜けても finally でクライアントを閉じる
     assert client.closed
+
+
+# --- ソースごとの閾値 -------------------------------------------------------
+
+
+def test_閾値の上書きをJSONで読む():
+    s = Settings(source_thresholds='{"qiita": {"min_score": 50, "min_comments": 0}}')
+    assert s.threshold_overrides == {"qiita": Thresholds(min_score=50, min_comments=0)}
+
+
+def test_閾値の上書きが無ければ空():
+    assert Settings().threshold_overrides == {}
+
+
+def test_片方だけの上書きは共通設定で埋める():
+    s = Settings(min_score=100, min_comments=30, source_thresholds='{"qiita": {"min_comments": 0}}')
+    assert s.threshold_overrides["qiita"] == Thresholds(min_score=100, min_comments=0)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "{壊れた",  # JSON として読めない
+        '["qiita"]',  # オブジェクトでない
+        '{"qiita": 50}',  # 値がオブジェクトでない
+        '{"qiita": {"min_score": "たくさん"}}',  # 整数でない
+    ],
+)
+def test_壊れた閾値の設定は落とす(raw):
+    # 黙って無視すると、意図した数と違う記事が出続けて無人実行では気づけない
+    with pytest.raises(ValueError, match="IMOTECH_SOURCE_THRESHOLDS"):
+        assert Settings(source_thresholds=raw).threshold_overrides
+
+
+def test_ソース自身の既定を使う():
+    from imotech.sources.qiita import Qiita
+
+    s = Settings(sources="qiita", min_score=100, min_comments=30)
+    with Qiita() as feed:
+        got = _resolve_thresholds(feed, s)
+    # Qiita はコメントを見ない閾値を自分で持っている
+    assert got["qiita"].min_comments == 0
+
+
+def test_上書きはソースの既定より優先する():
+    from imotech.sources.qiita import Qiita
+
+    s = Settings(
+        sources="qiita", source_thresholds='{"qiita": {"min_score": 5, "min_comments": 9}}'
+    )
+    with Qiita() as feed:
+        got = _resolve_thresholds(feed, s)
+    assert got["qiita"] == Thresholds(min_score=5, min_comments=9)
+
+
+def test_HackerNewsは共通設定に倒れる():
+    """後方互換。`IMOTECH_MIN_SCORE` が従来どおり効く。"""
+    from imotech.sources.hackernews import HackerNews
+
+    s = Settings(sources="hackernews", min_score=123, min_comments=45)
+    with HackerNews() as feed:
+        got = _resolve_thresholds(feed, s)
+    assert got["hackernews"] == Thresholds(min_score=123, min_comments=45)
+
+
+def test_ソースが1つならログは短い形():
+    s = Settings(sources="hackernews", min_score=100, min_comments=30)
+    line = _format_thresholds({"hackernews": Thresholds(100, 30)}, s)
+    assert line == "score>=100 かつ comments>=30"
+
+
+def test_ソースが複数ならログに内訳を出す():
+    # 「なぜこの候補が落ちたか」をログだけで追えるようにする
+    s = Settings(sources="hackernews,qiita")
+    line = _format_thresholds({"hackernews": Thresholds(100, 30), "qiita": Thresholds(30, 0)}, s)
+    assert "hackernews: score>=100 かつ comments>=30" in line
+    assert "qiita: score>=30 かつ comments>=0" in line
+
+
+# --- PII の配線（回帰テスト） -----------------------------------------------
+#
+# **このリポジトリは同じ形の回帰を 1 度出している**（コミット 4e8d781
+# 「束ねたソースで PII が漏れていた」）。`cli` が著者のハンドルを匿名化へ
+# 渡し忘れても、単体テストは全部通ってしまう。compose を通して確かめる。
+
+
+def _compose_with_author(tmp_path, monkeypatch, author, *, url: str, title: str = "t"):
+    """記事プラットフォームを模した候補で compose を dry-run する。
+
+    **候補ストア側の URL とタイトルを差し替える**のが要点。`cli` が匿名化に通すのは
+    `story.url` ではなく候補の `c.url` なので、そこを著者入りにしないと素通りする。
+    """
+
+    class _AuthoredFeed(_FakeFeed):
+        pass
+
+    _AuthoredFeed.author = author
+
+    settings, args, _ = _compose_env(
+        tmp_path,
+        monkeypatch,
+        candidates=1,
+        llm_outcomes=[],
+        notion_outcomes=None,
+        notion_configured=False,
+        dry_run=True,
+    )
+    monkeypatch.setattr("imotech.cli.create_feed", lambda _names, **_kw: _AuthoredFeed())
+
+    store = CandidateStore(tmp_path / "c.jsonl")
+    rows = store.load()
+    for row in rows:
+        row.url = url.format(id=row.ref.id)
+        row.title = title
+    store.update(rows)
+    return settings, args
+
+
+def _prompt_of(captured: str) -> str:
+    """dry-run の出力から、LLM に渡るプロンプト本体だけを取り出す。
+
+    処理中の候補を示すログ行（`cli` が出す生の元記事 URL）は出典と同じ扱いで
+    伏せていないので、**プロンプトだけを見る**。
+    """
+    marker = "## ユーザープロンプト"
+    assert marker in captured, "dry-run が最後まで走っていない"
+    return captured[captured.index(marker) :]
+
+
+def test_composeは著者のハンドルをLLMへの入力に残さない(tmp_path, monkeypatch, capsys):
+    """**PII の回帰テスト。**
+
+    記事プラットフォームでは元記事の URL 自体に著者のハンドルが入る
+    （`qiita.com/<user_id>/items/<id>`）。`--dry-run` はプロンプト全文を
+    標準出力に出すので、そこに著者名が出ないことが LLM 入力の検証になる。
+    """
+    settings, args = _compose_with_author(
+        tmp_path, monkeypatch, "carol123", url="https://qiita.com/carol123/items/{id}"
+    )
+    assert cmd_compose(settings, args) == 0
+    assert "carol123" not in _prompt_of(capsys.readouterr().out)
+
+
+def test_composeは3文字の著者ハンドルも残さない(tmp_path, monkeypatch, capsys):
+    # 短いハンドルは本文では伏せない規則があるが、URL のパス区画には当てない
+    settings, args = _compose_with_author(
+        tmp_path, monkeypatch, "abc", url="https://qiita.com/abc/items/{id}"
+    )
+    assert cmd_compose(settings, args) == 0
+    assert "qiita.com/abc/" not in _prompt_of(capsys.readouterr().out)
+
+
+def test_composeは英単語と同じ綴りの著者ハンドルも残さない(tmp_path, monkeypatch, capsys):
+    # `what` は _COMMON_WORDS にあるが、URL のパス区画では伏せる
+    settings, args = _compose_with_author(
+        tmp_path, monkeypatch, "what", url="https://qiita.com/what/items/{id}"
+    )
+    assert cmd_compose(settings, args) == 0
+    assert "qiita.com/what/" not in _prompt_of(capsys.readouterr().out)
+
+
+def test_composeはタイトルの著者ハンドルも伏せる(tmp_path, monkeypatch, capsys):
+    settings, args = _compose_with_author(
+        tmp_path,
+        monkeypatch,
+        "carol123",
+        url="https://qiita.com/carol123/items/{id}",
+        title="carol123 が作った CLI の話",
+    )
+    assert cmd_compose(settings, args) == 0
+    assert "carol123" not in _prompt_of(capsys.readouterr().out)
+
+
+def test_composeは著者のハンドルを本文の匿名化に渡す(tmp_path, monkeypatch):
+    # 本文は元記事＝著者本人のページなので、自分の ID を書いていることがある
+    fetcher = _fake_fetcher_class(None)
+    fetcher.seen_handles = []
+    settings, args = _compose_with_author(
+        tmp_path, monkeypatch, "carol123", url="https://qiita.com/carol123/items/{id}"
+    )
+    monkeypatch.setattr("imotech.cli.ArticleFetcher", fetcher)
+    cmd_compose(settings, args)
+    assert fetcher.seen_handles == [frozenset({"carol123"})]
+
+
+def test_著者がいないソースでも動く(tmp_path, monkeypatch, capsys):
+    # author が None のソース（従来の Hacker News 経路）を壊していない
+    settings, args = _compose_with_author(tmp_path, monkeypatch, None, url="https://e.com/{id}")
+    assert cmd_compose(settings, args) == 0
+    assert _prompt_of(capsys.readouterr().out)
+
+
+def test_知らないソース名の上書きは落とす():
+    """**打ち間違いを黙って通さない。** どの候補にも当たらない上書きは
+    「設定したのに効かない」を無言で食うことになる。"""
+    from imotech.sources.hackernews import HackerNews
+
+    s = Settings(sources="hackernews", source_thresholds='{"hackernwes": {"min_score": 1}}')
+    with HackerNews() as feed:
+        with pytest.raises(ValueError, match="知らないソース"):
+            _resolve_thresholds(feed, s)
+
+
+def test_設定から外したソースの上書きは通す():
+    # 実装のあるソースなら、いま使っていなくても古い候補に効かせられる
+    from imotech.sources.hackernews import HackerNews
+
+    s = Settings(sources="hackernews", source_thresholds='{"qiita": {"min_score": 1}}')
+    with HackerNews() as feed:
+        assert _resolve_thresholds(feed, s)["qiita"] == Thresholds(1, 30)
+
+
+def test_壊れた設定は外部への問い合わせより先に落ちる(monkeypatch, capsys):
+    """**compose の中盤で落ちると、最大 60 件の問い合わせを捨ててからになる。**
+
+    Qiita では非認証 1 時間分のレート予算がそれで消える。
+    """
+    from imotech.cli import main
+
+    monkeypatch.setenv("IMOTECH_SOURCE_THRESHOLDS", "{壊れた")
+
+    def _boom(*_a, **_kw):
+        raise AssertionError("設定を検証する前にコマンドが走った")
+
+    monkeypatch.setattr("imotech.cli.cmd_stats", _boom)
+    assert main(["stats"]) == 2
+    assert "IMOTECH_SOURCE_THRESHOLDS" in capsys.readouterr().err

@@ -1,5 +1,6 @@
 """LLM 層のテスト。実 API は呼ばず、フォールバックの挙動をモックで確かめる。"""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -10,6 +11,7 @@ from imotech.llm import (
     DraftGenerator,
     LLMError,
     _to_glossary,
+    build_response_schema,
     build_user_prompt,
     slugify,
 )
@@ -266,3 +268,57 @@ def test_imoの判定に使う文言を含む用語は捨てる():
         {"term": "C", "description": "普通の説明。"},
     ]
     assert [g.term for g in _to_glossary(raw)] == ["C"]
+
+
+# --- 反応が無いソース -------------------------------------------------------
+
+
+def test_反応が無ければ論調を求めない():
+    """記事プラットフォーム（Qiita など）の記事はコメントがほぼ無い（実測で 82% が 0 件）。
+
+    無い議論を要求すると、モデルは元記事の内容を論点に見せかけて埋めてしまい、
+    「反応で述べられたことだけを書く」という約束が壊れる。
+    """
+    schema = build_response_schema(with_discourse=False)
+    assert "discourse" not in schema["properties"]
+    assert "discourse" not in schema["required"]
+    # 他の必須項目は落とさない
+    assert set(schema["required"]) == {"title", "slug_hint", "digest", "tags"}
+
+
+def test_反応があれば論調を求める():
+    assert build_response_schema(with_discourse=True) is RESPONSE_SCHEMA
+    assert "discourse" in RESPONSE_SCHEMA["required"]
+
+
+def test_スキーマの切り替えは元を壊さない():
+    # 辞書を共有して書き換えると、次の記事の生成に影響が残る
+    before = list(RESPONSE_SCHEMA["required"])
+    build_response_schema(with_discourse=False)
+    assert RESPONSE_SCHEMA["required"] == before
+
+
+def test_反応が0件ならプロンプトにその旨を書く():
+    p = build_user_prompt(STORY, ARTICLE, [])
+    assert "この記事には反応がありません" in p
+    assert "discourse` は出力しないでください" in p
+
+
+def test_プロンプトのソース名はStoryから取る():
+    # 「Hacker News」を埋め込まない。何の場での反応かで読み方が変わるので名前は出す
+    p = build_user_prompt(STORY, ARTICLE, REACTIONS)
+    assert "## hackernews での反応" in p
+
+    qiita_story = replace(STORY, ref=SourceRef("qiita", "x"))
+    assert "## qiita での反応" in build_user_prompt(qiita_story, ARTICLE, REACTIONS)
+
+
+def test_論調を含まない応答からも記事を作れる():
+    payload = (
+        '{"title":"日本語のタイトル","slug_hint":"example-title",'
+        '"digest":["A","B","C"],"tags":["rust"]}'
+    )
+    g = _gen({"m1": payload})
+    result = g.generate(STORY, ARTICLE, [], url_hash="abc123", hatena_url="https://b/x")
+    assert result.draft.discourse == []
+    assert result.draft.digest == ["A", "B", "C"]

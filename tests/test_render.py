@@ -316,10 +316,30 @@ def test_同じ記事の再実行では新しく書かない(tmp_path: Path):
 # --- 内容が空の記事を作らない ----------------------------------------------
 
 
-@pytest.mark.parametrize("kw", [{"digest": []}, {"discourse": []}, {"digest": [], "discourse": []}])
-def test_要旨や論調が空なら記事にしない(kw):
+@pytest.mark.parametrize("kw", [{"digest": []}, {"digest": [], "discourse": []}])
+def test_要旨が空なら記事にしない(kw):
     with pytest.raises(ValueError):
         to_markdown(_draft(**kw))
+
+
+def test_論調が空でも記事になる():
+    """反応の無いソース（Qiita など、実測でコメント 0 件が 82%）の記事。
+
+    無い議論を書かせるより、要旨と imo だけの記事にする。
+    **空の見出しは作らない** — 「## 議論の論調」の下に何も無い記事は出さない。
+    """
+    md = to_markdown(_draft(discourse=[]))
+    assert "## 元記事の要旨" in md
+    assert "## 議論の論調" not in md
+    assert "## imo" in md
+
+
+def test_論調が空の記事はMarkdownから読み戻せる():
+    # 往復しても論調が生えない・要旨が落ちない
+    draft = _draft(discourse=[])
+    back = from_markdown(to_markdown(draft))
+    assert back.discourse == []
+    assert back.digest == draft.digest
 
 
 # --- 固定句による判定 ------------------------------------------------------

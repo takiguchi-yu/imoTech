@@ -35,7 +35,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Protocol, TypeVar, runtime_checkable
 
-from ..models import Reaction, SourceRef, Story
+from ..models import Reaction, SourceRef, Story, Thresholds
 
 _T = TypeVar("_T")
 
@@ -78,6 +78,28 @@ def profile_url_patterns(feed: object) -> list[re.Pattern[str]]:
         return [p for child in children for p in profile_url_patterns(child)]
     pattern = getattr(feed, "profile_url_re", None)
     return [pattern] if isinstance(pattern, re.Pattern) else []
+
+
+def thresholds_for(feed: object, source: str, fallback: Thresholds) -> Thresholds:
+    """そのソースで「話題になった」と言える下限。持たなければ fallback。
+
+    **閾値の桁はソースによって違う**（Hacker News はコメント数百、Qiita はほぼ 0）。
+    どの値が妥当かはソース固有の知識なので、ソース自身に `default_thresholds` として
+    持たせ、持たないソースは共通の設定値に倒す。**Hacker News はあえて持たない** —
+    共通設定が Hacker News の値そのものなので、`IMOTECH_MIN_SCORE` が従来どおり効く。
+
+    束ねたソース（MultiFeed）では、名前の一致する子に聞く。
+    """
+    children = getattr(feed, "feeds", None)
+    if isinstance(children, list):
+        for child in children:
+            if getattr(child, "name", None) == source:
+                return thresholds_for(child, source, fallback)
+        return fallback
+    if getattr(feed, "name", None) != source:
+        return fallback
+    own = getattr(feed, "default_thresholds", None)
+    return own if isinstance(own, Thresholds) else fallback
 
 
 @contextmanager

@@ -10,7 +10,7 @@ import argparse
 import json
 import sys
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
 
 from .anonymize import anonymize, scrub_title, scrub_url
@@ -18,7 +18,7 @@ from .config import REPO_ROOT, USER_AGENT, Settings, load_settings
 from .extract import ArticleFetcher
 from .links import hatena_bookmark_url
 from .llm import LLMError, build_user_prompt, load_system_instruction
-from .models import Candidate, CandidateState, SkipReason
+from .models import Candidate, CandidateState, SkipReason, Thresholds
 from .notion import (
     DATABASE_SCHEMA,
     NotionBlockLimitError,
@@ -39,8 +39,8 @@ from .render import (
     set_imo,
     write_article,
 )
-from .sources import opened, profile_url_patterns, supports_reactions
-from .sources.registry import create_feed
+from .sources import opened, profile_url_patterns, supports_reactions, thresholds_for
+from .sources.registry import available, create_feed
 from .store import CandidateStore
 from .urlhash import url_hash
 
@@ -100,12 +100,53 @@ def cmd_collect(settings: Settings, args: argparse.Namespace) -> int:
     after = len(store.load())
 
     _p(
-        f"HN から {len(stories)} 件取得 / 新規 {added} 件を追加 "
+        f"{feed.name} から {len(stories)} 件取得 / 新規 {added} 件を追加 "
         f"（{before} → {after} 行）: {settings.candidates_path}"
     )
     if skipped_urls:
         _p(f"  URL を解釈できなかった {skipped_urls} 件は捨てました")
     return 0
+
+
+def _resolve_thresholds(feed: object, settings: Settings) -> dict[str, Thresholds]:
+    """ソースごとの選別閾値を決める。
+
+    優先順位は **環境変数の上書き → ソース自身の既定 → 共通設定**。
+    Hacker News は自分の既定を持たないので共通設定に倒れ、`IMOTECH_MIN_SCORE` が
+    従来どおり効く（後方互換）。
+    """
+    overrides = settings.threshold_overrides
+    # **ソース名の打ち間違いを黙って通さない。** どの候補にも当たらない上書きは
+    # 「設定したのに効かない」を無言で食うことになる。設定から外したソースの
+    # 古い候補に効かせたい場合もあるので、実装のあるソース名は許す
+    known = set(settings.source_names) | set(available())
+    unknown = sorted(set(overrides) - known)
+    if unknown:
+        raise ValueError(
+            f"IMOTECH_SOURCE_THRESHOLDS に知らないソース {', '.join(unknown)} が"
+            f"あります。使えるのは {', '.join(sorted(known))}"
+        )
+    out = {
+        name: overrides.get(name) or thresholds_for(feed, name, settings.default_thresholds)
+        for name in settings.source_names
+    }
+    # 設定から外したソースの古い候補にも、上書きがあれば効かせる
+    for name, t in overrides.items():
+        out.setdefault(name, t)
+    return out
+
+
+def _format_thresholds(thresholds: dict[str, Thresholds], settings: Settings) -> str:
+    """ログ用。ソースが 1 つなら従来どおりの短い表記にする。"""
+    names = settings.source_names
+    if len(names) == 1 and names[0] in thresholds:
+        t = thresholds[names[0]]
+        return f"score>={t.min_score} かつ comments>={t.min_comments}"
+    return " / ".join(
+        f"{n}: score>={thresholds[n].min_score} かつ comments>={thresholds[n].min_comments}"
+        for n in names
+        if n in thresholds
+    )
 
 
 # --- compose --------------------------------------------------------------
@@ -194,6 +235,11 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
             )
             return 2
 
+        # **外部に問い合わせる前に閾値を確定させる。** 設定ミスをここで落とさないと、
+        # 最大 60 件の問い合わせ（Qiita なら非認証 1 時間分のレート予算）を使い切って
+        # から落ちることになる
+        thresholds = _resolve_thresholds(feed, settings)
+
         for i, c in enumerate(probe_targets, 1):
             if time.monotonic() > deadline:
                 _p(
@@ -226,14 +272,14 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
     sel = select(
         matured,
         now=now,
-        min_score=settings.min_score,
-        min_comments=settings.min_comments,
+        thresholds=thresholds,
+        default_thresholds=settings.default_thresholds,
         max_drafts=max_drafts,
         max_age_hours=settings.max_age_hours,
         evaluated=evaluated,
     )
     _p(
-        f"閾値 points>={settings.min_score} かつ comments>={settings.min_comments} → "
+        f"閾値 {_format_thresholds(thresholds, settings)} → "
         f"選出 {len(sel.selected)} 件 / 打ち切り {len(sel.to_skip)} 件"
     )
     if not sel.selected:
@@ -270,7 +316,12 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
             _p(f"    {c.url}")
             _p(f"    points={c.score_at_evaluate} comments={c.comments_at_evaluate}")
 
-            article = fetcher.fetch(c.url)
+            # 記事の著者は伏せ字の対象に入れる。記事プラットフォームでは
+            # **元記事の URL も本文も著者本人のもの**（qiita.com/<user_id>/items/<id>）
+            # なので、著者が 1 度もコメントしていなくても伏せる必要がある
+            extra_handles = frozenset(h for h in (story.author,) if h)
+
+            article = fetcher.fetch(c.url, extra_handles)
             if article is None:
                 _p("    → 本文を取得できないため飛ばします")
                 no_content.append(c)
@@ -281,11 +332,14 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
                 raw_reactions,
                 limit=settings.max_reactions,
                 profile_url_res=profile_url_patterns(feed),
+                extra_handles=extra_handles,
             )
             # 元記事の URL とタイトルも匿名化を通す。ブログ主が自分の記事を投稿して
             # コメントもする場合、ドメイン名が投稿者ハンドルと一致する
-            display_url = scrub_url(c.url, raw_reactions)
-            display_title = scrub_title(c.title, raw_reactions, profile_url_patterns(feed))
+            display_url = scrub_url(c.url, raw_reactions, extra_handles)
+            display_title = scrub_title(
+                c.title, raw_reactions, profile_url_patterns(feed), extra_handles
+            )
             _p(f"    本文 {len(article.text)} 文字 ({article.via}) / 反応 {len(reactions)} 件")
 
             if args.dry_run:
@@ -308,9 +362,17 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
                 _p("=" * 70)
                 _p("## レスポンススキーマ（response_schema として渡す）")
                 _p("=" * 70)
-                from .llm import RESPONSE_SCHEMA
+                from .llm import build_response_schema
 
-                _p(json.dumps(RESPONSE_SCHEMA, ensure_ascii=False, indent=2))
+                # **実際に渡すものを出す。** 反応が 0 件のときは discourse が外れるので、
+                # RESPONSE_SCHEMA をそのまま出すと dry-run と本番で食い違う
+                _p(
+                    json.dumps(
+                        build_response_schema(with_discourse=bool(reactions)),
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
                 _p("=" * 70)
                 continue
 
@@ -466,21 +528,32 @@ def cmd_stats(settings: Settings, args: argparse.Namespace) -> int:
         return 0
     states = Counter(c.state.value for c in rows)
     reasons = Counter(c.skip_reason for c in rows if c.skip_reason)
-    scores = sorted(
-        (c.score_at_evaluate for c in rows if c.score_at_evaluate is not None), reverse=True
-    )
     _p(f"候補 {len(rows)} 件: " + ", ".join(f"{k}={v}" for k, v in sorted(states.items())))
     if reasons:
         _p("打ち切り理由: " + ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())))
-    if scores:
-        mid = scores[len(scores) // 2]
-        over = sum(1 for s in scores if s >= settings.min_score)
-        _p(f"評価済みスコア: 最大 {scores[0]} / 中央 {mid} / 件数 {len(scores)}")
-        _p(f"  （閾値 {settings.min_score} 以上: {over} 件 = {over / len(scores):.0%}）")
-        if over > settings.max_drafts_per_run * len(scores) / 10:
-            _p("  → 閾値を満たす候補が多い。IMOTECH_MIN_SCORE を上げる余地があります")
-    else:
+
+    # **ソースごとに分けて出す。** 閾値がソースごとに違うので、混ぜて 1 本の
+    # 閾値と比べると数字が合わず、「閾値を上げる余地がある」が別ソースには
+    # 当てはまらない誤った助言になる
+    evaluated_by_source: dict[str, list[int]] = defaultdict(list)
+    for c in rows:
+        if c.score_at_evaluate is not None:
+            evaluated_by_source[c.ref.source].append(c.score_at_evaluate)
+    if not evaluated_by_source:
         _p("評価済み（compose を通った）候補はまだありません")
+        return 0
+
+    with opened(create_feed(settings.source_names, user_agent=USER_AGENT)) as feed:
+        thresholds = _resolve_thresholds(feed, settings)
+    for source, raw in sorted(evaluated_by_source.items()):
+        scores = sorted(raw, reverse=True)
+        t = thresholds.get(source, settings.default_thresholds)
+        over = sum(1 for x in scores if x >= t.min_score)
+        mid = scores[len(scores) // 2]
+        _p(f"[{source}] 評価済みスコア: 最大 {scores[0]} / 中央 {mid} / 件数 {len(scores)}")
+        _p(f"  （閾値 {t.min_score} 以上: {over} 件 = {over / len(scores):.0%}）")
+        if over > settings.max_drafts_per_run * len(scores) / 10:
+            _p(f"  → 閾値を満たす候補が多い。{source} の閾値を上げる余地があります")
     return 0
 
 
@@ -952,7 +1025,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("collect", help="HN から候補を収集して候補ストアに追記する")
+    sub.add_parser("collect", help="ソースから候補を収集して候補ストアに追記する")
 
     c = sub.add_parser(
         "compose",
@@ -1047,6 +1120,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _dispatch(settings: Settings, args: argparse.Namespace) -> int:
+    # **どのコマンドでも、真っ先に設定の形を確かめる。** property は参照するまで
+    # 評価されないので、触らないと compose の中盤まで壊れた JSON に気づけない。
+    # そこまでに外部への問い合わせを済ませてしまうと、レート予算を捨ててから落ちる
+    _ = settings.threshold_overrides
+
     handlers = {
         "collect": cmd_collect,
         "compose": cmd_compose,

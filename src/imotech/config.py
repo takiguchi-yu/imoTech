@@ -6,12 +6,18 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .models import Thresholds
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: IMOTECH_SOURCE_THRESHOLDS の 1 ソースに書ける項目。`Thresholds` のフィールドと一致する
+_THRESHOLD_FIELDS = frozenset({"min_score", "min_comments"})
 
 # フォールバックの順序。先頭から試し、429/5xx が続いたら次へ落とす。
 # gemini-1.5-flash は 2025-09-29、2.0 系は 2026-06-01 に shutdown 済みで存在しない。
@@ -57,6 +63,11 @@ class Settings(BaseSettings):
     min_score: int = Field(default=100, validation_alias="IMOTECH_MIN_SCORE")
     min_comments: int = Field(default=30, validation_alias="IMOTECH_MIN_COMMENTS")
     max_drafts_per_run: int = Field(default=5, validation_alias="IMOTECH_MAX_DRAFTS_PER_RUN")
+    # ソースごとの閾値の上書き。JSON で指定する
+    # 例: '{"qiita": {"min_score": 50, "min_comments": 0}}'
+    # 指定が無いソースは、そのソース自身の既定（`Qiita.default_thresholds` など）を使い、
+    # それも無ければ上の min_score / min_comments に倒す
+    source_thresholds: str = Field(default="", validation_alias="IMOTECH_SOURCE_THRESHOLDS")
     max_age_hours: int = Field(default=96, validation_alias="IMOTECH_MAX_AGE_HOURS")
 
     # 1 回の実行で HN に問い合わせる候補の上限。pending が数千件に育っても
@@ -96,6 +107,57 @@ class Settings(BaseSettings):
         default=REPO_ROOT / "site" / "src" / "content" / "articles",
         validation_alias="IMOTECH_ARTICLES_DIR",
     )
+
+    @property
+    def default_thresholds(self) -> Thresholds:
+        """ソース固有の既定も上書きも無いときに使う閾値。従来の挙動そのもの。"""
+        return Thresholds(min_score=self.min_score, min_comments=self.min_comments)
+
+    @property
+    def threshold_overrides(self) -> dict[str, Thresholds]:
+        """`IMOTECH_SOURCE_THRESHOLDS` で明示された、ソースごとの閾値。
+
+        壊れた JSON は黙って無視せず落とす。閾値の設定ミスを黙って握り潰すと、
+        意図した数より多い・少ない記事が出続けて無人実行では気づけない。
+        """
+        raw = self.source_thresholds.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"IMOTECH_SOURCE_THRESHOLDS が JSON として読めません: {e}") from None
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                "IMOTECH_SOURCE_THRESHOLDS はソース名をキーにしたオブジェクトで指定してください"
+                ' （例: \'{"qiita": {"min_score": 50, "min_comments": 0}}\'）'
+            )
+        out: dict[str, Thresholds] = {}
+        for name, spec in parsed.items():
+            if not isinstance(spec, dict):
+                raise ValueError(
+                    f"IMOTECH_SOURCE_THRESHOLDS の {name!r} がオブジェクトではありません"
+                )
+            # **キー名の打ち間違いを黙って通さない。** min_score を minscore と書くと
+            # 共通設定で埋められ、「設定したのに効かない」を無言で食うことになる
+            unknown = sorted(set(spec) - _THRESHOLD_FIELDS)
+            if unknown:
+                raise ValueError(
+                    f"IMOTECH_SOURCE_THRESHOLDS の {name!r} に知らない項目 "
+                    f"{', '.join(unknown)} があります。使えるのは "
+                    f"{', '.join(sorted(_THRESHOLD_FIELDS))}"
+                )
+            try:
+                out[str(name)] = Thresholds(
+                    min_score=int(spec.get("min_score", self.min_score)),
+                    min_comments=int(spec.get("min_comments", self.min_comments)),
+                )
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"IMOTECH_SOURCE_THRESHOLDS の {name!r} の "
+                    "min_score / min_comments は整数で指定してください"
+                ) from None
+        return out
 
     @property
     def source_names(self) -> list[str]:

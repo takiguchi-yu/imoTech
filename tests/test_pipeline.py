@@ -2,10 +2,22 @@
 
 from datetime import UTC, datetime, timedelta
 
-from imotech.models import Candidate, CandidateState, SkipReason, SourceRef
+from imotech.models import Candidate, CandidateState, SkipReason, SourceRef, Thresholds
 from imotech.pipeline import mark_skipped, matured_candidates, select
 
 NOW = datetime(2026, 9, 21, 12, 0, tzinfo=UTC)
+
+
+def _select(matured, *, min_score, min_comments, **kw):
+    """閾値を 1 組だけ指定する、このファイル用の呼び出し。
+
+    本物の `select` はソースごとに閾値を引く。ここのテストは単一ソースの
+    判定を見るものなので、全ソース共通の既定として渡す。
+    ソース別に引けることは `test_ソースごとに閾値を引く` で別に確かめる。
+    """
+    return select(
+        matured, thresholds={}, default_thresholds=Thresholds(min_score, min_comments), **kw
+    )
 
 
 def _c(hours_ago: int, score=None, comments=None, h=None) -> Candidate:
@@ -32,7 +44,7 @@ def test_ちょうど境界の候補は含む():
 
 
 def test_閾値を満たすものだけ選ばれる():
-    s = select(
+    s = _select(
         [_c(30, 200, 50), _c(31, 99, 50), _c(32, 200, 29)],
         now=NOW,
         min_score=100,
@@ -44,7 +56,7 @@ def test_閾値を満たすものだけ選ばれる():
 
 
 def test_スコア降順で上位N件に絞る():
-    s = select(
+    s = _select(
         [_c(30, 150, 40), _c(31, 500, 40), _c(32, 300, 40)],
         now=NOW,
         min_score=100,
@@ -57,28 +69,28 @@ def test_スコア降順で上位N件に絞る():
 
 def test_閾値を満たす候補が無ければ0件を返す():
     # 「薄い記事を量産しない」ための設計。0 件はエラーではなく正常
-    s = select(
+    s = _select(
         [_c(30, 10, 2)], now=NOW, min_score=100, min_comments=30, max_drafts=5, max_age_hours=96
     )
     assert s.selected == []
 
 
 def test_期限内で閾値未満なら持ち越す():
-    s = select(
+    s = _select(
         [_c(30, 10, 2)], now=NOW, min_score=100, min_comments=30, max_drafts=5, max_age_hours=96
     )
     assert s.to_skip == []
 
 
 def test_期限を過ぎて閾値未満なら打ち切る():
-    s = select(
+    s = _select(
         [_c(100, 10, 2)], now=NOW, min_score=100, min_comments=30, max_drafts=5, max_age_hours=96
     )
     assert [(c.url_hash, r) for c, r in s.to_skip] == [("h100", SkipReason.BELOW_THRESHOLD)]
 
 
 def test_期限を過ぎても閾値を満たせば打ち切らない():
-    s = select(
+    s = _select(
         [_c(100, 500, 99)], now=NOW, min_score=100, min_comments=30, max_drafts=5, max_age_hours=96
     )
     assert s.to_skip == []
@@ -88,7 +100,7 @@ def test_期限を過ぎても閾値を満たせば打ち切らない():
 def test_評価値が無ければ収集時の値で判定する():
     # compose が現在値を取り直せなかった候補。収集時の値に落ちるだけで例外にしない
     c = _c(30)
-    s = select([c], now=NOW, min_score=1, min_comments=1, max_drafts=5, max_age_hours=96)
+    s = _select([c], now=NOW, min_score=1, min_comments=1, max_drafts=5, max_age_hours=96)
     assert s.selected == [c]
 
 
@@ -107,7 +119,7 @@ def test_評価できなかった候補は選出しない():
     ok = _c(30, 200, 50, h="ok")
     failed = _c(31, h="failed")  # 評価値なし・収集時の値は閾値超え
     failed.score_at_collect, failed.comments_at_collect = 500, 200
-    s = select(
+    s = _select(
         [ok, failed],
         now=NOW,
         min_score=100,
@@ -122,7 +134,7 @@ def test_評価できなかった候補は選出しない():
 def test_評価できなくても期限超過なら打ち切る():
     # 打ち切らないと、毎回 HN に問い合わせ続ける候補が永久に残る
     old = _c(200, h="old")
-    s = select(
+    s = _select(
         [old],
         now=NOW,
         min_score=100,
@@ -138,7 +150,7 @@ def test_閾値は満たすが溢れて期限超過した候補も打ち切る()
     # to_skip を failing だけから作ると、この候補が永久に pending のまま残る
     a = _c(200, 500, 99, h="a")
     b = _c(201, 400, 99, h="b")
-    s = select(
+    s = _select(
         [a, b],
         now=NOW,
         min_score=100,
@@ -153,7 +165,7 @@ def test_閾値は満たすが溢れて期限超過した候補も打ち切る()
 
 def test_evaluatedを渡さなければ全件が選出対象():
     # 純関数として単体で使うときの既定
-    s = select(
+    s = _select(
         [_c(30, 200, 50)],
         now=NOW,
         min_score=100,
@@ -162,3 +174,68 @@ def test_evaluatedを渡さなければ全件が選出対象():
         max_age_hours=96,
     )
     assert len(s.selected) == 1
+
+
+# --- ソースごとの閾値 -------------------------------------------------------
+
+
+def _cs(source: str, score: int, comments: int, h: str) -> Candidate:
+    return Candidate(
+        url_hash=h,
+        ref=SourceRef(source, h),
+        url=f"https://{source}.example/{h}",
+        title="t",
+        collected_at=NOW - timedelta(hours=30),
+        score_at_collect=0,
+        comments_at_collect=0,
+        score_at_evaluate=score,
+        comments_at_evaluate=comments,
+    )
+
+
+def test_ソースごとに閾値を引く():
+    """**ここが無いと Qiita は 1 件も通らない。**
+
+    Hacker News は議論そのものが目的の場なのでコメントが数百付くが、記事
+    プラットフォームではほぼ 0 件（実測で 82%）。同じ閾値を当てると片方が死ぬ。
+    """
+    hn = _cs("hackernews", 200, 50, "hn")
+    qiita = _cs("qiita", 50, 0, "qi")
+    s = select(
+        [hn, qiita],
+        now=NOW,
+        thresholds={
+            "hackernews": Thresholds(min_score=100, min_comments=30),
+            "qiita": Thresholds(min_score=30, min_comments=0),
+        },
+        default_thresholds=Thresholds(min_score=100, min_comments=30),
+        max_drafts=5,
+        max_age_hours=96,
+    )
+    assert {c.url_hash for c in s.selected} == {"hn", "qi"}
+
+
+def test_共通の閾値だけならコメントの無い候補は落ちる():
+    # 回帰の向き。ソース別閾値を外すと Qiita がこうなる
+    s = select(
+        [_cs("qiita", 50, 0, "qi")],
+        now=NOW,
+        thresholds={},
+        default_thresholds=Thresholds(min_score=100, min_comments=30),
+        max_drafts=5,
+        max_age_hours=96,
+    )
+    assert s.selected == []
+
+
+def test_知らないソースの候補は共通の閾値で判定する():
+    # 設定から外したソースの候補が候補ストアに残っていても落ちない
+    s = select(
+        [_cs("gone", 500, 99, "g")],
+        now=NOW,
+        thresholds={"qiita": Thresholds(min_score=1, min_comments=0)},
+        default_thresholds=Thresholds(min_score=100, min_comments=30),
+        max_drafts=5,
+        max_age_hours=96,
+    )
+    assert [c.url_hash for c in s.selected] == ["g"]

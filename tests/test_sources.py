@@ -9,12 +9,13 @@ from datetime import UTC, datetime
 
 import pytest
 
-from imotech.models import Engagement, Reaction, SourceRef, Story
+from imotech.models import Engagement, Reaction, SourceRef, Story, Thresholds
 from imotech.sources import (
     ReactionSource,
     StoryFeed,
     profile_url_patterns,
     supports_reactions,
+    thresholds_for,
 )
 from imotech.sources.multi import MultiFeed
 from imotech.sources.registry import available, create, create_feed, register
@@ -53,7 +54,7 @@ class WithReactions(FeedOnly):
 
     def fetch_reactions(self, ref: SourceRef) -> tuple[Story | None, list[Reaction]]:
         return _story(self.name, ref.id, 500), [
-            Reaction(comment_id=1, author="a", text="反応", depth=0, reply_count=1)
+            Reaction(comment_id="1", author="a", text="反応", depth=0, reply_count=1)
         ]
 
 
@@ -191,3 +192,65 @@ def test_MultiFeedのcloseはcloseを持つソースだけ呼ぶ():
     with MultiFeed([FeedOnly(), Closable()]):
         pass
     assert closed == ["closable"]
+
+
+# --- ソースごとの閾値 -------------------------------------------------------
+
+
+def test_既定を持たないソースは共通設定に倒れる():
+    # **Hacker News はあえて持たない。** 共通設定が Hacker News の値そのものなので、
+    # IMOTECH_MIN_SCORE が従来どおり効く（後方互換）
+    from imotech.sources.hackernews import HackerNews
+
+    common = Thresholds(min_score=100, min_comments=30)
+    with HackerNews() as hn:
+        assert thresholds_for(hn, "hackernews", common) == common
+
+
+def test_既定を持つソースはそれを使う():
+    from imotech.sources.qiita import Qiita
+
+    common = Thresholds(min_score=100, min_comments=30)
+    with Qiita() as q:
+        got = thresholds_for(q, "qiita", common)
+    # Qiita はコメントがほぼ付かないので、コメント数を見ない
+    assert got.min_comments == 0
+    assert got != common
+
+
+def test_束ねたソースでは名前の一致する子に聞く():
+    from imotech.sources.hackernews import HackerNews
+    from imotech.sources.qiita import Qiita
+
+    common = Thresholds(min_score=100, min_comments=30)
+    with MultiFeed([HackerNews(), Qiita()]) as feed:
+        assert thresholds_for(feed, "hackernews", common) == common
+        assert thresholds_for(feed, "qiita", common).min_comments == 0
+        # 束ねていないソースの古い候補は共通設定で判定する
+        assert thresholds_for(feed, "gone", common) == common
+
+
+def test_名前が違えば自分の既定を渡さない():
+    # 単一ソースで動かしているときに、別ソースの候補へ誤って厳しい／緩い閾値を当てない
+    from imotech.sources.qiita import Qiita
+
+    common = Thresholds(min_score=100, min_comments=30)
+    with Qiita() as q:
+        assert thresholds_for(q, "hackernews", common) == common
+
+
+def test_束ねたソースでもQiitaのプロフィールURLを集める():
+    """**PII の回帰テスト。** ソースを足すたびにパターンを集め漏らしていないか。"""
+    from imotech.anonymize import scrub
+    from imotech.sources.hackernews import HackerNews
+    from imotech.sources.qiita import Qiita
+
+    with MultiFeed([HackerNews(), Qiita()]) as feed:
+        patterns = profile_url_patterns(feed)
+    assert len(patterns) == 2
+    out = scrub(
+        "a https://news.ycombinator.com/user?id=patio11 b https://qiita.com/carol123",
+        frozenset(),
+        patterns,
+    )
+    assert "patio11" not in out and "carol123" not in out

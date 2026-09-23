@@ -125,7 +125,7 @@ def test_削除済みコメントはスキップする():
     payload = _item([_c(1), {**_c(2), "text": None}, _c(3)])
     with _client(lambda r: httpx.Response(200, json=payload)) as hn:
         story, reactions = hn.fetch_reactions(SourceRef("hackernews", "1"))
-    assert [r.comment_id for r in reactions] == [1, 3]
+    assert [r.comment_id for r in reactions] == ["1", "3"]
     # 削除済みは num_comments にも数えない
     assert story.engagement.comments == 2
 
@@ -135,8 +135,8 @@ def test_階層と返信数が取れる():
     with _client(lambda r: httpx.Response(200, json=payload)) as hn:
         _, reactions = hn.fetch_reactions(SourceRef("hackernews", "1"))
     by_id = {r.comment_id: r for r in reactions}
-    assert (by_id[1].depth, by_id[1].reply_count) == (0, 2)
-    assert (by_id[2].depth, by_id[2].reply_count) == (1, 0)
+    assert (by_id["1"].depth, by_id["1"].reply_count) == (0, 2)
+    assert (by_id["2"].depth, by_id["2"].reply_count) == (1, 0)
 
 
 def test_深すぎる枝は打ち切る():

@@ -14,10 +14,12 @@ from collections.abc import Callable, Iterable
 
 from . import StoryFeed
 from .hackernews import HackerNews
+from .qiita import Qiita
 
 #: 名前 → 生成関数。生成関数は `user_agent` をキーワードで受け取る。
 _FACTORIES: dict[str, Callable[..., StoryFeed]] = {
     HackerNews.name: HackerNews,
+    Qiita.name: Qiita,
 }
 
 

@@ -112,7 +112,8 @@ Notion 運用との対応:
     │      ├── __init__.py   StoryFeed / ReactionSource の Protocol
     │      ├── registry.py   名前 → 具象（Factory Method）
     │      ├── multi.py      複数ソースを 1 つに束ねる（Composite）
-    │      └── hackernews.py Algolia API の実装（Adapter を兼ねる）
+    │      ├── hackernews.py Algolia API の実装（Adapter を兼ねる）
+    │      └── qiita.py      Qiita API v2 の実装（同上）
     ├──▶ links.py        外部サービスへのリンクの組み立て（はてブなど）
     ├──▶ extract.py      元記事本文の取得。robots.txt の判定を含む
     ├──▶ anonymize.py    反応から投稿者情報を落とす
@@ -159,8 +160,41 @@ Python の標準的な書き方へ翻訳している**。
 3. **表示名と注目度の単位が要るなら** `site/src/lib/sources.ts` の `SOURCES` にも 1 行足す
    （無くても壊れないが、生のソース名と "points" が出る）
 
-**`cli.py` も `store.py` も `render.py` も変えない。** これは `tests/test_sources.py` で
+`cli.py` も `store.py` も `render.py` も変えずに済むことは、`tests/test_sources.py` で
 ダミーのソースを登録して実証している。
+
+#### 2 つ目のソース（Qiita）で実際に何が起きたか
+
+**上の 3 手順では済まなかった。** ただし増えた変更は「2 つ目だから」ではなく、
+**Hacker News しか無かったあいだ気づけなかった暗黙の仮定**を剥がすためのもので、
+3 つ目以降には持ち越さない。記録として残す。
+
+| 剥がした仮定 | 直した場所 | なぜ Hacker News では見えなかったか |
+|---|---|---|
+| コメント ID は数値 | `models.Reaction.comment_id` を `str` へ | HN は数値。Qiita は 20 桁の 16 進 |
+| 元記事の URL に投稿者名は入らない | `models.Story.author` を追加し、`anonymize` が伏せる | HN の元記事は第三者のブログ。Qiita は `qiita.com/<user_id>/items/<id>` |
+| 話題には必ず議論が付く | `llm` / `render` / `notion` が**論調ゼロを許す** | → 2.3 / 2.4 / 2.5 |
+| 「話題になった」の閾値は 1 組でよい | `Thresholds` と `pipeline.select` のソース別引き | → 4.1b |
+| 収集時点で注目度が付いている | Qiita は収集時に絞らない（`fetch_stories`） | → 5.3b |
+| プロンプトの「Hacker News」 | `prompts/compose.md` と `llm.build_user_prompt` | 単なる書き残し |
+
+**3 つ目以降で触るのは、やはり上の 3 手順だけのはず。** 上の 6 行はいずれも
+「ソースに固有の値」を持てる形に変えたもので、値は `sources/<name>.py` の中に置ける。
+
+### 1.3c ソースごとに違う値をどこに置くか
+
+ソースが増えると「ソースによって違う値」が出てくる（閾値、注目度の呼び名、
+プロフィール URL の形）。**判定するコードは 1 つに保ち、値だけをソースが持つ。**
+
+| 値 | どこが持つか | どこが使うか |
+|---|---|---|
+| 選別の閾値 | ソースの `default_thresholds`（`models.Thresholds`） | `pipeline.select`（→ 4.1） |
+| プロフィール URL の形 | ソースの `profile_url_re` | `anonymize.scrub`（→ 5.4） |
+| 投稿者のハンドル | `Story.author` | `anonymize`（→ 5.4） |
+| 表示名・注目度の単位 | `site/src/lib/sources.ts` | サイトの表示 |
+
+**`pipeline` は `sources` を知らない。** 候補が持つ `ref.source` を鍵にして辞書を引くだけで、
+どのソースが実在するかも、その既定値が何かも知らない。値を束ねて渡すのは `cli` の仕事。
 
 ---
 
@@ -250,11 +284,29 @@ URL: {url}
 本文（抜粋、最大 8000 文字）:
 {article_text}
 
-## Hacker News の反応（{n} 件、投稿者情報は削除済み）
+## {source} での反応（{n} 件、投稿者情報は削除済み）
+スコア {score} / コメント {comments}
+
 [C1] (返信 7 件, 階層 0) {body}
 [C2] (返信 0 件, 階層 1) {body}
 ...
 ```
+
+**ソース名は `Story.ref.source` から書く**（`hackernews` / `qiita`）。何の場での反応かで
+読み方が変わるので名前は出すが、**表示名は持たせない** — ソースごとの呼び名を知るのは
+表示層の責務で、`llm` はソースを知らない。
+
+**反応が 1 件も無いときは、その旨を明示する。**
+
+```
+## {source} での反応
+スコア {score} / コメント {comments}
+
+**この記事には反応がありません。** `discourse` は出力しないでください。
+```
+
+明示しないと、モデルは元記事の内容を論点に見せかけて `discourse` を埋めてしまう。
+スキーマからもフィールドごと外す（→ 2.4）。
 
 **匿名化で落とすもの**: `by`（ハンドル名）、ユーザープロフィール URL、コメント本文中の `@username` 形式のメンション。
 **残すもの**: 本文、`len(kids)`（直接の返信数）、ツリーの階層。
@@ -301,6 +353,12 @@ URL: {url}
 | `tags` | 2〜5 要素、英小文字 |
 | `glossary` | **0〜5 要素**。`term` は記事に出てくる語（**分野は問わない**）、`description` は 30〜80 文字。`required` に入れず `minItems` も置かない — 用語が要らない記事で数を埋めさせないため |
 
+**反応が 1 件も無いときは `discourse` をスキーマから外す**（`llm.build_response_schema(with_discourse=False)`）。
+`required` に残したまま「書くな」と指示しても、モデルは構造化出力の制約を満たそうとして
+元記事の内容から論点を作ってしまう。**フィールドごと消すのが確実**。
+
+記事プラットフォーム（Qiita など）では反応 0 件が普通で、実測では 82% がこれに当たる。
+
 ### 2.5 公開物の Markdown（`site/src/content/articles/<slug>.md`）
 
 ```markdown
@@ -342,6 +400,10 @@ generatedAt: 2026-09-22T06:12:31Z
 `set_imo`（Notion の承認を差し込む処理）は「次の見出しまで」を imo 節として扱うので、
 後ろに節を足しても壊れない。**用語が 0 件の記事では見出しごと出さない**（空の節を作らない）。
 書式は `- **語**: 説明` に固定していて、`from_markdown` が同じ形で読み戻す。
+
+**反応が 1 件も無い記事は「議論の論調」の節を持たない。** 要旨 → imo → 用語 の順になる。
+空の見出しは作らない（`render.to_markdown` / `notion.build_blocks` の両方）。
+`from_markdown` は論調節の無い Markdown も読み戻せる（往復で論調が生えない）。
 
 出典と AI 利用の開示は**本文に入れない**。サイトのテンプレート（`site/src/pages/articles/[...slug].astro`）がフロントマターから描く。本文にも持たせると片方だけ古くなる。
 
@@ -502,6 +564,32 @@ compose の処理順:
 
 **現在値で判定する理由**: 収集時点のスコアは「まだ誰も反応していない」段階の値で、熟成の判定に使えない。Algolia の `/api/v1/items/<id>` は 1 リクエストでコメント木ごと取れるため、判定と反応取得を同じレスポンスで済ませられる。
 
+### 4.1b 閾値はソースごとに違う
+
+`models.Thresholds`（`min_score` + `min_comments`）で表し、`pipeline.select` が
+候補の `ref.source` で引く。**判定するのは `pipeline` だけ**で、`Thresholds` は値しか持たない。
+
+**なぜ 1 組では足りないか。** Hacker News は議論そのものが目的の場なのでコメントが数百付くが、
+記事プラットフォームではほぼ付かない。Qiita の実測（2026-09-23、`created:>=2026-09-16
+stocks:>3` で取得した 56 件）では **0 件が 46 件（82%）、最多でも 9 件**だった。
+共通の `min_comments=30` を当てると Qiita は 1 件も通らない。
+
+決め方は上から順に見て、決まった時点で採用する。
+
+| 優先 | どこ | 例 |
+|---|---|---|
+| 1 | `IMOTECH_SOURCE_THRESHOLDS`（JSON） | `{"qiita": {"min_score": 50, "min_comments": 0}}` |
+| 2 | ソース自身の `default_thresholds` | `Qiita.default_thresholds = Thresholds(30, 0)` |
+| 3 | 共通の `IMOTECH_MIN_SCORE` / `IMOTECH_MIN_COMMENTS` | `Thresholds(100, 30)` |
+
+**Hacker News はあえて 2 を持たない。** 共通設定が Hacker News の値そのものなので、
+持たせずに 3 へ倒すことで `IMOTECH_MIN_SCORE` が従来どおり効く（後方互換）。
+
+**設定ミスは黙って無視せず落とす。** 壊れた JSON、知らないソース名、知らない項目名の
+いずれも `ValueError` にして起動時（`cli._dispatch`）で止める。握り潰すと、意図した数と
+違う記事が出続けても無人実行では気づけない。**外部への問い合わせより前に落とす**のは、
+Qiita なら非認証 1 時間分のレート予算を捨ててから落ちることになるため。
+
 ### 4.2 閾値の初期値の根拠と調整
 
 `MIN_SCORE = 100` / `MIN_COMMENTS = 30` は**運用しながら調整する前提の初期値**であり、一次情報に基づく値ではない。HN の front page 到達ラインは時間帯とその日の投稿量で変動するため、固定値の正解は存在しない。
@@ -590,6 +678,39 @@ GET https://hn.algolia.com/api/v1/search_by_date
       &hitsPerPage=50
 ```
 `COLLECT_MIN_SCORE` は熟成前の粗いフィルタ（初期値 10）。ここを 0 にすると 1 日数千件が候補に入り jsonl が肥大化する。
+
+### 5.3b Qiita
+
+Hacker News と性格が大きく違い、**レート制限が実運用の天井になる**。
+
+| 事象 | 対処 |
+|---|---|
+| レート制限 | **非認証 60 req/h/IP**、認証 1000 req/h（[API v2 docs](https://qiita.com/api/v2/docs)）。`Rate-Limit` / `Rate-Remaining` / `Rate-Reset` ヘッダが返る |
+| **超過時の応答** | **429 ではなく 403 + `{"type": "rate_limit_exceeded"}`**（実測）。403 は権限エラーでもあるので、本文の `type` で見分ける |
+| 超過したら | **リトライしない**（時間単位のリセットなので数秒待っても回復しない）。以降のリクエストも送らず、候補は pending のまま次回へ。警告は 1 回だけ、`Rate-Reset` から回復時刻を添えて出す |
+| 4xx | **リトライしない**。削除済み記事（404）は待っても変わらないのに 1 件で 3 リクエスト食う |
+| 5xx / タイムアウト | 指数バックオフ 3 回（Hacker News と同じ） |
+| リクエスト数の節約 | **`comments_count` が 0 なら `/comments` を呼ばない**。実測で 82% がこれに当たるので、1 候補あたり 2 → 1 リクエストになる |
+| **取得失敗と 0 件の区別** | `/items/:id` は成功したが `/comments` が失敗した場合、**`(None, [])` を返して判定不能にする**。`[]` を返すと議論のある記事が「反応なし」として確定的に書き出され、候補が drafted になって二度と作り直されない |
+
+**収集クエリ**:
+```
+GET https://qiita.com/api/v2/items
+      ?page=1&per_page=100
+      &query=created:>={(window_hours の 1 日前)} stocks:>0
+```
+
+**`min_points` を収集時に使わない。** Qiita の記事は投稿直後に LGTM が付かない
+（実測: 直近 24 時間の記事は最大 6 LGTM）。収集時の値で切ると候補が 1 件も残らないので、
+母数だけ絞って熟成後の再評価に任せる。Hacker News は投稿直後から points が伸びるので、
+あちらは収集時に切っている。
+
+**`created:` は日付単位**なので 1 日広く問い合わせ、時刻での足切りは手元で行う。
+ページを追う間に新着が入るとオフセットがずれるため、`ref.id` で重複を除く。
+
+**運用上の天井**: `IMOTECH_MAX_PROBES_PER_RUN`（既定 60）と collect の検索（最大 3 ページ）が
+同じ 60 req/h を食う。**Qiita を有効にするなら 40 以下に下げる**。GitHub Actions の IP は
+他の利用者と共有するため、自分が使っていなくても枯れていることがある。
 
 ### 5.4 元記事の本文取得
 
@@ -696,7 +817,8 @@ imoTech/
 │       │   ├── __init__.py        StoryFeed / ReactionSource の Protocol
 │       │   ├── registry.py        名前 → 具象（Factory Method）
 │       │   ├── multi.py           複数ソースを束ねる（Composite）
-│       │   └── hackernews.py      Algolia API の実装
+│       │   ├── hackernews.py      Algolia API の実装
+│       │   └── qiita.py           Qiita API v2 の実装
 │       ├── store.py               candidates.jsonl の読み書き（Repository）
 │       ├── pipeline.py            熟成判定と選別（副作用を持たない純関数）
 │       ├── anonymize.py           反応から投稿者情報を落とす

@@ -73,6 +73,24 @@ RESPONSE_SCHEMA = {
 }
 
 
+def build_response_schema(*, with_discourse: bool) -> dict:
+    """生成に使う JSON スキーマ。
+
+    **反応が 1 件も無いときは `discourse` を求めない。** 記事プラットフォーム
+    （Qiita など）の記事にはコメントがほぼ付かず、実測で 82% が 0 件だった。
+    無い議論を要求すると、モデルは元記事の内容を論点に見せかけて埋めてしまい、
+    「反応で述べられたことだけを書く」という約束（prompts/compose.md）が壊れる。
+    """
+    if with_discourse:
+        return RESPONSE_SCHEMA
+    schema = {
+        **RESPONSE_SCHEMA,
+        "properties": {k: v for k, v in RESPONSE_SCHEMA["properties"].items() if k != "discourse"},
+        "required": [k for k in RESPONSE_SCHEMA["required"] if k != "discourse"],
+    }
+    return schema
+
+
 class LLMError(RuntimeError):
     """全モデルで生成に失敗した。呼び出し側は候補を pending のまま残す。"""
 
@@ -102,12 +120,28 @@ def build_user_prompt(
         f"本文（{article.via} から取得、{len(article.text)} 文字）:",
         article.text,
         "",
-        f"## Hacker News の反応（{len(reactions)} 件、投稿者情報は削除済み）",
-        f"スコア {story.engagement.score} / コメント {story.engagement.comments}",
-        "",
     ]
-    for r in reactions:
-        lines.append(f"[{r.label}] (返信 {r.reply_count} 件, 階層 {r.depth}) {r.text}")
+    # ソース名は出す（何の場での反応かで読み方が変わる）が、**表示名は持たない** —
+    # ソースごとの呼び名を知るのは表示層の責務で、この層はソースを知らない
+    if reactions:
+        lines += [
+            f"## {story.ref.source} での反応（{len(reactions)} 件、投稿者情報は削除済み）",
+            f"スコア {story.engagement.score} / コメント {story.engagement.comments}",
+            "",
+        ]
+        lines += [
+            f"[{r.label}] (返信 {r.reply_count} 件, 階層 {r.depth}) {r.text}" for r in reactions
+        ]
+    else:
+        # **無い議論を書かせない。** 反応が無いことを明示しないと、モデルは
+        # 元記事の内容を論点に見せかけて discourse を埋めてしまう
+        lines += [
+            f"## {story.ref.source} での反応",
+            f"スコア {story.engagement.score} / コメント {story.engagement.comments}",
+            "",
+            "**この記事には反応がありません。** `discourse` は出力しないでください。",
+            "",
+        ]
     return "\n".join(lines)
 
 
@@ -206,7 +240,7 @@ class DraftGenerator:
         config = types.GenerateContentConfig(
             system_instruction=self._system,
             response_mime_type="application/json",
-            response_schema=RESPONSE_SCHEMA,
+            response_schema=build_response_schema(with_discourse=bool(reactions)),
             temperature=0.4,
             # ツールは一切使わない。既定のままだと SDK が毎回
             # 「Direct use of automatic function calling ... is not recommended」を
@@ -301,9 +335,10 @@ def _to_draft(
     payload: dict, *, story: Story, url_hash: str, hatena_url: str, model: str
 ) -> ArticleDraft:
     now = datetime.now(UTC)
+    # 反応が無い記事では discourse を求めていない（build_response_schema）
     discourse = [
         DiscoursePoint(point=d["point"], detail=d["detail"], stance=d["stance"])
-        for d in payload["discourse"]
+        for d in payload.get("discourse") or []
     ]
     glossary = _to_glossary(payload.get("glossary"))
     return ArticleDraft(

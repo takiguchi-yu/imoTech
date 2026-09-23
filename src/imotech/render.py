@@ -126,17 +126,21 @@ def to_markdown(draft: ArticleDraft, *, published_at: datetime | None = None) ->
         "",
     ]
 
-    if not draft.digest or not draft.discourse:
+    if not draft.digest:
         # 見出しだけの記事を作らない。呼び出し側が skipped にする
-        raise ValueError(
-            f"要旨 {len(draft.digest)} 件 / 論調 {len(draft.discourse)} 件では記事にならない"
-        )
+        raise ValueError(f"要旨 {len(draft.digest)} 件では記事にならない")
 
     body = ["## 元記事の要旨", ""]
     body += [f"- {line}" for line in draft.digest]
-    body += ["", "## 議論の論調", ""]
-    for point in draft.discourse:
-        body += [f"### {point.point}", "", point.detail, ""]
+    # **論調が無い記事を許す。** 記事プラットフォーム（Qiita など）の記事には
+    # コメントがほぼ付かない（実測で 82% が 0 件）。無い議論を書かせるより、
+    # 要旨と imo だけの記事にするほうが正しい。空の節は作らない
+    if draft.discourse:
+        body += ["", "## 議論の論調", ""]
+        for point in draft.discourse:
+            body += [f"### {point.point}", "", point.detail, ""]
+    else:
+        body += [""]
     body += ["## imo", "", IMO_PROMPT, ""]
     # imo の後ろに置く。記事の締めは運営者の所感で、用語は付録として最後に読む。
     # set_imo は次の見出しまでを imo 節として扱うので、ここに足しても壊れない。
