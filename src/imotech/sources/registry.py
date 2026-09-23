@@ -37,7 +37,8 @@ def create(name: str, **kwargs: object) -> StoryFeed:
         factory = _FACTORIES[name]
     except KeyError:
         raise ValueError(
-            f"知らないソース {name!r} です。使えるのは {', '.join(available())}"
+            f"IMOTECH_SOURCES に知らないソース {name!r} があります。"
+            f"使えるのは {', '.join(available())}"
         ) from None
     return factory(**kwargs)
 
@@ -50,8 +51,10 @@ def create_feed(names: Iterable[str], **kwargs: object) -> StoryFeed:
     """
     from .multi import MultiFeed
 
-    wanted = [n.strip() for n in names if n.strip()]
+    # 同名を 2 つ束ねると、同じ話題を 2 回取って limit の枠を食い、
+    # fetch_reactions は先頭に固定される（振り分けが name をキーにしているため）
+    wanted = list(dict.fromkeys(n.strip() for n in names if n.strip()))
     if not wanted:
-        raise ValueError(f"ソースが指定されていません。使えるのは {', '.join(available())}")
+        raise ValueError(f"IMOTECH_SOURCES が空です。使えるのは {', '.join(available())}")
     feeds = [create(n, **kwargs) for n in wanted]
     return feeds[0] if len(feeds) == 1 else MultiFeed(feeds)

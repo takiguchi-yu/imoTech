@@ -1,15 +1,27 @@
-/** 話題を拾ったソースの表示名。
+/** 話題を拾ったソースの表示名と、注目度の単位。
  *
  * Python 側（`src/imotech/sources/registry.py`）の名前と対応する。
- * 知らない名前が来たらそのまま出す（新しいソースを足しても表示が壊れない）。
+ * **ソースを足したらここにも 1 行足す**（無くても壊れないが、生の名前と
+ * "points" が出るので体裁が崩れる）。
  */
-const SOURCE_LABELS: Record<string, string> = {
-  hackernews: "Hacker News",
-  qiita: "Qiita",
-  zenn: "Zenn",
-  devto: "dev.to",
+type SourceMeta = {
+  /** 表示名 */
+  label: string;
+  /** 注目度の呼び名。Hacker News は points、Qiita は LGTM、Zenn はいいね */
+  scoreUnit: string;
+};
+
+const SOURCES: Record<string, SourceMeta> = {
+  hackernews: { label: "Hacker News", scoreUnit: "points" },
+  qiita: { label: "Qiita", scoreUnit: "LGTM" },
+  zenn: { label: "Zenn", scoreUnit: "いいね" },
+  devto: { label: "dev.to", scoreUnit: "reactions" },
 };
 
 export function sourceLabel(source: string): string {
-  return SOURCE_LABELS[source] ?? source;
+  return SOURCES[source]?.label ?? source;
+}
+
+export function scoreUnit(source: string): string {
+  return SOURCES[source]?.scoreUnit ?? "points";
 }

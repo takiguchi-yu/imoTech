@@ -154,8 +154,12 @@ Python の標準的な書き方へ翻訳している**。
 
 **ソースを足すときに触る範囲**
 
-`sources/` に 1 ファイル足し、`registry.py` の `_FACTORIES` に 1 行足すだけ。
-`cli.py` も `store.py` も `render.py` も変えない。これは `tests/test_sources.py` で
+1. `sources/<name>.py` を書く（`StoryFeed` を満たす。反応も取れるなら `ReactionSource` も）
+2. `registry.py` の `_FACTORIES` に 1 行足す
+3. **表示名と注目度の単位が要るなら** `site/src/lib/sources.ts` の `SOURCES` にも 1 行足す
+   （無くても壊れないが、生のソース名と "points" が出る）
+
+**`cli.py` も `store.py` も `render.py` も変えない。** これは `tests/test_sources.py` で
 ダミーのソースを登録して実証している。
 
 ---

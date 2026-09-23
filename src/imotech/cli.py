@@ -39,7 +39,7 @@ from .render import (
     set_imo,
     write_article,
 )
-from .sources import profile_url_pattern, supports_reactions
+from .sources import opened, profile_url_patterns, supports_reactions
 from .sources.registry import create_feed
 from .store import CandidateStore
 from .urlhash import url_hash
@@ -65,7 +65,7 @@ def cmd_collect(settings: Settings, args: argparse.Namespace) -> int:
     store = CandidateStore(settings.candidates_path)
     before = len(store.load())
 
-    with create_feed(settings.source_names, user_agent=USER_AGENT) as feed:
+    with opened(create_feed(settings.source_names, user_agent=USER_AGENT)) as feed:
         _p(f"ソース: {feed.name}")
         stories = feed.fetch_stories(
             window_hours=settings.collect_window_hours,
@@ -183,7 +183,17 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
     evaluated: set[str] = set()
     stories_by_hash: dict[str, object] = {}
     reactions_by_hash: dict[str, list] = {}
-    with create_feed(settings.source_names, user_agent=USER_AGENT) as feed:
+    with opened(create_feed(settings.source_names, user_agent=USER_AGENT)) as feed:
+        # 反応を取れないソース（RSS など）だけの構成では、現在値が取れず永久に
+        # 1 本も記事にならない。**無言で成功させない** — 設定ミスとして落とす
+        if not supports_reactions(feed):
+            _p(
+                f"ソース {feed.name} からは反応を取れないため、記事にできる候補が"
+                "ありません。IMOTECH_SOURCES に反応を持つソースを含めてください。",
+                err=True,
+            )
+            return 2
+
         for i, c in enumerate(probe_targets, 1):
             if time.monotonic() > deadline:
                 _p(
@@ -193,10 +203,6 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
                 break
             if i % 20 == 0:
                 _p(f"  現在値を取得中… {i}/{len(probe_targets)}")
-            # 反応を持たないソース（RSS など）の候補は、ここで飛ばして
-            # 次の候補へ進む。閾値の判定に使う現在値も取れないので選出されない
-            if not supports_reactions(feed):
-                continue
             story, reactions = feed.fetch_reactions(c.ref)
             if story is None:
                 continue
@@ -256,7 +262,7 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
         timeout=settings.http_timeout_seconds,
         max_bytes=settings.max_response_bytes,
         max_chars=settings.max_article_chars,
-        profile_url_re=profile_url_pattern(feed),
+        profile_url_res=profile_url_patterns(feed),
     ) as fetcher:
         for i, c in enumerate(sel.selected, 1):
             story = stories_by_hash[c.url_hash]
@@ -274,12 +280,12 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
             reactions = anonymize(
                 raw_reactions,
                 limit=settings.max_reactions,
-                profile_url_re=profile_url_pattern(feed),
+                profile_url_res=profile_url_patterns(feed),
             )
             # 元記事の URL とタイトルも匿名化を通す。ブログ主が自分の記事を投稿して
             # コメントもする場合、ドメイン名が投稿者ハンドルと一致する
             display_url = scrub_url(c.url, raw_reactions)
-            display_title = scrub_title(c.title, raw_reactions, profile_url_pattern(feed))
+            display_title = scrub_title(c.title, raw_reactions, profile_url_patterns(feed))
             _p(f"    本文 {len(article.text)} 文字 ({article.via}) / 反応 {len(reactions)} 件")
 
             if args.dry_run:
@@ -1032,6 +1038,15 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     settings = load_settings()
     args = build_parser(settings).parse_args(argv)
+    # 設定の誤りはトレースバックで出さない。どこを直すかが分かる 1 行にする
+    try:
+        return _dispatch(settings, args)
+    except ValueError as e:
+        _p(f"設定を確認してください: {e}", err=True)
+        return 2
+
+
+def _dispatch(settings: Settings, args: argparse.Namespace) -> int:
     handlers = {
         "collect": cmd_collect,
         "compose": cmd_compose,

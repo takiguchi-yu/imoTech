@@ -87,6 +87,19 @@ jobs:
       # 判定はゲート本体（src/lib/imo.ts の imoOf）を呼ぶ。固定句の grep だけだと、
       # プレースホルダを消して不可視文字だけを書いた記事を取りこぼす
       # （U+200B / U+FEFF などは trim() を通り抜ける）。
+      # 旧形式のフロントマター（hnUrl / hnScore / hnComments）を持つ記事が
+      # 1 件でも混ざると、zod の必須チェックで**ビルド全体が落ちる**
+      # （content collection のエラーは 1 ファイルで全記事を巻き込む）。
+      # Python 側は旧キーも読めるので、ここで非対称を埋める
+      - name: 記事のフロントマターが新形式であること
+        run: |
+          set -euo pipefail
+          if grep -l '^hnUrl:\|^hnScore:\|^hnComments:' src/content/articles/*.md 2>/dev/null; then
+            echo "::error::旧形式の記事があります。discussionUrl / score / comments に移行してください"
+            exit 1
+          fi
+          echo "記事のフロントマターはすべて新形式です"
+
       - name: 未記入の記事が出力に含まれないこと
         run: node scripts/check-unpublished.mjs
 

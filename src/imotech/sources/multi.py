@@ -20,12 +20,12 @@ class MultiFeed:
     「静かなソースの枠が空いたまま」になるのを避けるため。
     """
 
-    name = "multi"
-
     def __init__(self, feeds: Sequence[StoryFeed]) -> None:
         if not feeds:
             raise ValueError("ソースが 1 つも指定されていません")
         self._feeds = list(feeds)
+        # 障害時にログを読む人が「何を使ったか」を追えるよう、内訳を名前に入れる
+        self.name = f"multi({','.join(f.name for f in self._feeds)})"
 
     @property
     def feeds(self) -> list[StoryFeed]:
@@ -35,6 +35,7 @@ class MultiFeed:
         self, *, window_hours: int = 24, min_points: int = 10, limit: int = 50
     ) -> list[Story]:
         out: list[Story] = []
+        failed: list[str] = []
         for feed in self._feeds:
             # 1 つのソースが落ちても他は使う。収集はベストエフォートでよい
             # （次回の実行が拾い直す — docs/DESIGN.md 5.5）
@@ -45,7 +46,12 @@ class MultiFeed:
                     )
                 )
             except Exception as e:  # noqa: BLE001 — ソース側の例外の型を呼び出し側が知らない
+                failed.append(feed.name)
                 print(f"  [warn] {feed.name} からの収集に失敗: {e}", flush=True)
+        # **全部落ちたら握り潰さない。** 0 件で正常終了すると、候補が枯れて
+        # 記事が出なくなっても無人実行では誰も気づけない（docs/DESIGN.md 5.5）
+        if len(failed) == len(self._feeds):
+            raise RuntimeError(f"すべてのソースからの収集に失敗しました: {', '.join(failed)}")
         out.sort(key=lambda s: (-s.engagement.score, -s.engagement.comments))
         return out[:limit]
 

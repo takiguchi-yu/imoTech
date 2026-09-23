@@ -13,7 +13,7 @@ from imotech.models import Engagement, Reaction, SourceRef, Story
 from imotech.sources import (
     ReactionSource,
     StoryFeed,
-    profile_url_pattern,
+    profile_url_patterns,
     supports_reactions,
 )
 from imotech.sources.multi import MultiFeed
@@ -95,8 +95,21 @@ def test_反応を持つソースは両方を満たす():
 
 
 def test_プロフィールURLのパターンは持たなくてよい():
-    # 持たないソースには None が返る。anonymize 側がそれを見て処理を飛ばす
-    assert profile_url_pattern(FeedOnly()) is None
+    # 持たないソースには空が返る
+    assert profile_url_patterns(FeedOnly()) == []
+
+
+def test_束ねたソースでもプロフィールURLのパターンを集める():
+    """**PII の回帰テスト。** MultiFeed が自分のパターンを持たないために
+    伏せ字が丸ごとスキップされ、投稿者ハンドルが LLM と記事に流れた事故があった。"""
+    from imotech.anonymize import scrub
+    from imotech.sources.hackernews import HackerNews
+
+    feed = MultiFeed([FeedOnly(), HackerNews()])
+    patterns = profile_url_patterns(feed)
+    assert len(patterns) == 1  # 子のうち HackerNews だけが持つ
+    out = scrub("see https://news.ycombinator.com/user?id=patio11", frozenset(), patterns)
+    assert "patio11" not in out
 
 
 # --- Registry（Factory Method）---------------------------------------------
@@ -113,7 +126,7 @@ def test_知らない名前は候補を添えて落とす():
 
 
 def test_ソースが空なら落とす():
-    with pytest.raises(ValueError, match="指定されていません"):
+    with pytest.raises(ValueError, match="IMOTECH_SOURCES が空です"):
         create_feed([])
 
 

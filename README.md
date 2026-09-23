@@ -229,9 +229,9 @@ uv run imotech status   # imo 未記入と判定されている記事が挙が�
 |---|---|---|
 | `IMOTECH_CANDIDATES_PATH` | `data/candidates.jsonl` | 候補ストアの場所。ローカル検証で本番ストアを汚さないために使う |
 | `IMOTECH_ARTICLES_DIR` | `site/src/content/articles` | 生成した記事の Markdown の書き出し先 |
-| `IMOTECH_SOURCES` | `hackernews` | 使うソース。カンマ区切りで複数指定できる。2 つ以上なら束ねて 1 つとして扱う |
+| `IMOTECH_SOURCES` | `hackernews` | 使うソース。カンマ区切りで複数指定すると両方から集める。**使える名前は [`src/imotech/sources/registry.py`](./src/imotech/sources/registry.py) の `_FACTORIES`（現在は `hackernews` のみ）** |
 | `IMOTECH_MATURATION_HOURS` | 24 | 収集からこの時間が経った候補だけを評価する |
-| `IMOTECH_MIN_SCORE` | 100 | HN のスコア下限 |
+| `IMOTECH_MIN_SCORE` | 100 | 注目度のスコア下限 |
 | `IMOTECH_MIN_COMMENTS` | 30 | コメント数の下限 |
 | `IMOTECH_MAX_DRAFTS_PER_RUN` | 5 | 1 回の実行で作る下書きの上限 |
 | `IMOTECH_MAX_AGE_HOURS` | 96 | これを過ぎて処理されなかった候補は打ち切る |

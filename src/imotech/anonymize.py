@@ -8,6 +8,7 @@ Gemini の無料枠は入力が学習に使われ、人間のレビュアーが�
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from html.parser import HTMLParser
 
 from .models import AnonymizedReaction, Reaction
@@ -123,7 +124,7 @@ def strip_html(raw: str) -> str:
     return text.strip()
 
 
-def scrub(text: str, handles: frozenset[str], profile_url_re: re.Pattern[str] | None = None) -> str:
+def scrub(text: str, handles: frozenset[str], profile_url_res: Sequence[re.Pattern[str]]) -> str:
     """本文から PII を伏せる。
 
     順序に意味がある。
@@ -136,8 +137,8 @@ def scrub(text: str, handles: frozenset[str], profile_url_re: re.Pattern[str] | 
     6. スレッドに実在するハンドル名
     7. URL を戻す
     """
-    if profile_url_re is not None:
-        text = profile_url_re.sub(PLACEHOLDER, text)
+    for pattern in profile_url_res:
+        text = pattern.sub(PLACEHOLDER, text)
     text = _URL_WITH_HANDLE.sub(LINK_PLACEHOLDER, text)
 
     stash: list[str] = []
@@ -204,21 +205,21 @@ def scrub_url(url: str, reactions: list[Reaction]) -> str:
 
 
 def scrub_title(
-    title: str, reactions: list[Reaction], profile_url_re: re.Pattern[str] | None = None
+    title: str, reactions: list[Reaction], profile_url_res: Sequence[re.Pattern[str]]
 ) -> str:
     """元記事のタイトルを匿名化する。
 
     タイトルは公開された見出しなので、素のハンドル名との衝突で文章を壊すほうが
     害が大きい。メールアドレス・@メンション・プロフィール URL だけを伏せる。
     """
-    return scrub(title, frozenset(), profile_url_re)
+    return scrub(title, frozenset(), profile_url_res)
 
 
 def anonymize(
     reactions: list[Reaction],
     *,
     limit: int,
-    profile_url_re: re.Pattern[str] | None = None,
+    profile_url_res: Sequence[re.Pattern[str]],
 ) -> list[AnonymizedReaction]:
     """反応を匿名化し、議論を呼んだ順に limit 件まで絞る。
 
@@ -233,7 +234,7 @@ def anonymize(
 
     cleaned: list[tuple[int, Reaction, str]] = []
     for i, r in enumerate(reactions):
-        text = scrub(strip_html(r.text), handles, profile_url_re)
+        text = scrub(strip_html(r.text), handles, profile_url_res)
         if text:
             cleaned.append((i, r, text))
 

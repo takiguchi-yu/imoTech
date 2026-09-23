@@ -29,7 +29,7 @@ def _allow_all_hosts(monkeypatch):
 
 def _fetcher(handler, **kw):
     # 投稿者プロフィールの URL パターンはソースが持つ。本文の匿名化に使うので渡す
-    kw.setdefault("profile_url_re", PROFILE_URL_RE)
+    kw.setdefault("profile_url_res", [PROFILE_URL_RE])
     return ArticleFetcher(user_agent=UA, transport=httpx.MockTransport(handler), **kw)
 
 

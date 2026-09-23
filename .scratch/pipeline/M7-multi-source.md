@@ -2,7 +2,7 @@
 
 Hacker News だけに結合している収集層・モデル・表示層を、**ソースを足すだけで増やせる形**に作り替える。
 
-**Status:** 着手
+**Status:** 完了（完了条件 28 件のうち 25 件を充足。3 件は条件を改訂または別チケットに切った — 末尾参照）
 **Blocked by:** なし（M1〜M6 が完了していれば動く）
 
 ## なぜやるか
@@ -43,46 +43,57 @@ HN との違いが設計に効く。
 ## 完了条件
 
 ### 概念（models）
-- [ ] `SourceRef`（`source` + `id`）を導入し、どのソースのどの投稿かを 1 つの値で表すようにした
-- [ ] `Engagement`（`score` + `comments`）を導入し、注目度の指標をソース非依存にした
-- [ ] `Story` / `Candidate` / `ArticleDraft` から `hn_` 接頭辞のフィールドを無くした
-- [ ] `models.py` が **どのソースも知らない**ことを確認した（`hn` / `hatena` / `ycombinator` の grep が 0 件）
-- [ ] `hatena_url` の組み立てを `models` から出した（はてブは「元記事 URL から組み立てるリンク」であって Story の属性ではない）
+- [x] `SourceRef`（`source` + `id`）を導入し、どのソースのどの投稿かを 1 つの値で表すようにした
+- [x] `Engagement`（`score` + `comments`）を導入し、注目度の指標をソース非依存にした
+- [x] `Story` / `Candidate` / `ArticleDraft` から `hn_` 接頭辞のフィールドを無くした
+- [x] `models.py` から**ソース固有の URL 組み立てロジック**が消えたことを確認した
+      （**条件を改訂した。** 元の文言は「`hatena` の grep が 0 件」だったが、`ArticleDraft.hatena_url`
+      は**値**として残る — はてブへのリンクは記事に出す情報であって、話題の発見元とは別概念。
+      消したのは `Story.hn_url` / `Candidate.hn_url` / `Candidate.hatena_url` の**プロパティ**＝
+      組み立てロジックで、それは `links.py` と各ソースへ移した）
+- [x] `hatena_url` の組み立てを `models` から出した（はてブは「元記事 URL から組み立てるリンク」であって Story の属性ではない）
 
 ### 抽象（sources）
-- [ ] `StoryFeed` Protocol に `permalink(ref) -> str`（議論の URL）を足した
-- [ ] **反応を持たないソースを許す**設計にした（`ReactionSource` を実装しないソースがあってよい）
-- [ ] `sources/registry.py` に名前 → 具象の Registry を置いた（**Factory Method** を Python の辞書 + 関数に翻訳）
-- [ ] 複数ソースを 1 つの `StoryFeed` として扱える **Composite** を置いた
-- [ ] 各ソースの生データ → `Story` / `Reaction` の変換を **Adapter** として明示的に位置づけた
-- [ ] `HackerNews` を新しい Protocol に適合させた
+- [x] ~~`StoryFeed` Protocol に `permalink(ref) -> str`（議論の URL）を足した~~
+      → **足さなかった。`Story.discussion_url` に値として持たせた。** ソースが組み立てて入れるので、
+      `Story` を受け取った側（render / notion / llm）は**ソースを知らずに URL を使える**。
+      `permalink` を Protocol に置くと、URL が要るたびにソースを引き回すことになり依存の向きが崩れる
+- [x] **反応を持たないソースを許す**設計にした（`ReactionSource` を実装しないソースがあってよい）
+- [x] `sources/registry.py` に名前 → 具象の Registry を置いた（**Factory Method** を Python の辞書 + 関数に翻訳）
+- [x] 複数ソースを 1 つの `StoryFeed` として扱える **Composite** を置いた
+- [x] 各ソースの生データ → `Story` / `Reaction` の変換を **Adapter** として明示的に位置づけた
+- [x] `HackerNews` を新しい Protocol に適合させた
 
 ### 依存の向き（cli）
-- [ ] `cli.py` が具象（`HackerNews`）を import しなくなった
-- [ ] ソースを設定で切り替えられる（`IMOTECH_SOURCES`）
-- [ ] 反応を持たないソースの候補を `compose` がどう扱うか決めて実装した
+- [x] `cli.py` が具象（`HackerNews`）を import しなくなった
+- [x] ソースを設定で切り替えられる（`IMOTECH_SOURCES`）
+- [x] 反応を持たないソースの候補を `compose` がどう扱うか決めて実装した
 
 ### 互換性
-- [ ] 既存の `data/candidates.jsonl`（298 行）が**そのまま読める**（旧キーからのフォールバック）
-- [ ] 既存記事 12 件のフロントマターを移行した（または旧キーを読めるようにした）
-- [ ] `site/src/content.config.ts` の zod スキーマを新しい形に合わせた
-- [ ] 既存記事が**サイトのビルドを壊さない**ことを確認した
+- [x] 既存の `data/candidates.jsonl`（298 行）が**そのまま読める**（旧キーからのフォールバック）
+- [x] 既存記事 12 件のフロントマターを移行した（または旧キーを読めるようにした）
+- [x] `site/src/content.config.ts` の zod スキーマを新しい形に合わせた
+- [x] 既存記事が**サイトのビルドを壊さない**ことを確認した
 
 ### 表示と匿名化
-- [ ] `anonymize.py` の `news.ycombinator.com/user?id=` のハードコードをソース側に移した
-- [ ] サイトの「Hacker News」固定の文言をソース非依存にした（`[...slug].astro` / `about.astro` / `index.astro` / `Base.astro`）
+- [x] `anonymize.py` の `news.ycombinator.com/user?id=` のハードコードをソース側に移した
+- [x] サイトの「Hacker News」固定の文言をソース非依存にした（`[...slug].astro` / `about.astro` / `index.astro` / `Base.astro`）
 - [ ] Notion のプロパティ名を新しい形に合わせた
+      **未達。** `PROP_HN_URL = "HN URL"` などの**表示名は据え置いた**。既存 DB の 14 ページと
+      整合させるほうを優先している（`notion-setup --dry-run` で差分 0 を実測）。
+      入る値は `draft.discussion_url` / `draft.engagement.score` に変えてあるので、
+      HN 以外のソースを足すとラベルが実態とずれる。**リネームは既存ページの移行を伴うので別チケット**
 
 ### パターンの記録
-- [ ] `docs/DESIGN.md` に**採用したパターン**と**見送ったパターン**を理由つきで書いた
-- [ ] GoF の検討表（`oo-design`）を 1 行ずつ当て、当てた結果を記録した
+- [x] `docs/DESIGN.md` に**採用したパターン**と**見送ったパターン**を理由つきで書いた
+- [x] GoF の検討表（`oo-design`）を 1 行ずつ当て、当てた結果を記録した
 
 ### 検証
-- [ ] `uv run ruff format --check . && uv run ruff check . && uv run pytest -q` が通る
-- [ ] `cd site && npm test && npm run build && node scripts/check-unpublished.mjs` が通る
-- [ ] **2 つ目のソースを足すのに必要な変更が `sources/` の中だけで済む**ことを、実際にダミーのソースを 1 つ書いて確かめた
-- [ ] `docs/DESIGN.md` 1.3 の依存図と 6 節のディレクトリ構成を更新した（現状 `sources/` が 6 節から抜けている）
-- [ ] `CONTEXT.md` の `Story` の定義から「Hacker News に投稿された」を外した
+- [x] `uv run ruff format --check . && uv run ruff check . && uv run pytest -q` が通る
+- [x] `cd site && npm test && npm run build && node scripts/check-unpublished.mjs` が通る
+- [x] **2 つ目のソースを足すのに必要な変更が `sources/` の中だけで済む**ことを、実際にダミーのソースを 1 つ書いて確かめた
+- [x] `docs/DESIGN.md` 1.3 の依存図と 6 節のディレクトリ構成を更新した（現状 `sources/` が 6 節から抜けている）
+- [x] `CONTEXT.md` の `Story` の定義から「Hacker News に投稿された」を外した
 
 ## 見つけたときの状況
 
@@ -96,3 +107,71 @@ M5 に「はてブ・Reddit は収益化の間は不採用。ReactionSource を�
 ## 着手できる条件
 
 なし。
+
+---
+
+## レビューで直したもの（2026-09-23）
+
+3 視点のレビューで **Blocker 2 件 / Major 14 件 / Minor 10 件**。採用した分は以下。
+
+### Blocker 1: 束ねたソースで PII の伏せ字が丸ごと効かなくなっていた
+
+**視点 A と C が独立に実証した、この差分が入れた回帰。** `profile_url_pattern(feed)` は
+`feed.profile_url_re` を `getattr` で取るだけで、`MultiFeed` はその属性を持たないので**必ず None**。
+`anonymize.scrub` は `None` なら伏せ字を飛ばすため、**投稿者のプロフィール URL（ハンドル名を含む）が
+そのまま Gemini に渡り、記事にも残る**。M7 以前は `anonymize.py` にハードコードされていて常に効いていた。
+
+- `profile_url_patterns()` に変え、**束ねたソースでは子のぶんをすべて集める**（複数返す）
+- `scrub` / `scrub_title` / `anonymize` の**既定値を無くした**。渡し忘れが `TypeError` で落ちる
+  （既定 `None` は「安全側の既定」から「危険側の既定」への変更になっていた）
+- `tests/test_sources.py` に回帰テストを足した
+
+```
+単一 HackerNews  : ハンドル残存 = False
+MultiFeed([...]) : ハンドル残存 = False   （直す前は True）
+```
+
+### Blocker 2: `.env.example` が存在しないソース名を指していた
+
+`例: hackernews,qiita` と書いていたが `_FACTORIES` には `hackernews` しか無く、
+**コピーしてコメントを外すと `collect` が落ちる**。ドキュメントが誤った操作に誘導していた。
+
+### Major（採用）
+
+| 指摘 | 直した内容 |
+|---|---|
+| `StoryFeed` Protocol にコンテキストマネージャの契約が無いのに `cli` が `with` で使う。ダミーソースは `__enter__` を持たないので**実際に cli を通すと落ちる** | `opened()` を置き、`close()` を持つソースだけ閉じる。どちらの形のソースでも足せる |
+| 単一ソース経路で `ref.source` を検証していない（Composite と非対称）。**ID が数値のソースを足すと別記事を掴む** | 各ソースの `fetch_reactions` 先頭で確かめる |
+| `MultiFeed` の `except Exception` で、**全ソースが落ちても exit 0**。無人実行では Issue が立たない | 全部落ちたら再送出する |
+| 反応を取れないソースだけの構成で、compose が**無言で成功**し永久に記事が出ない | 設定ミスとして終了コード 2 で落とす |
+| `supports_reactions(MultiFeed)` が、子が全部非対応でも True | 子を再帰的に見る |
+| 旧形式の記事が 1 件混ざると **zod の必須チェックでサイトのビルド全体が落ちる**（Python 側は旧キーを読めるのに非対称） | CI に「記事のフロントマターが新形式であること」の検査を足した |
+| 旧形式 `candidates.jsonl` のフォールバックに**テストが 1 件も無い**（本番 298 行が依存） | `tests/test_store.py` に 3 件足した |
+| 設定ミスがトレースバックで出る | `main()` で捕まえて 1 行にし、メッセージに `IMOTECH_SOURCES` を入れた |
+| 複数ソース時のログが `ソース: multi` だけで内訳が分からない | `multi(hackernews,qiita)` の形にした |
+| DESIGN の「触る範囲」にサイト側（`site/src/lib/sources.ts`）が抜けていた | 手順を 3 段に分けて明記 |
+| 注目度の単位「points」がハードコードで、Qiita では嘘になる | `sources.ts` に `scoreUnit` を持たせた（Qiita は LGTM、Zenn はいいね） |
+| RSS の説明文だけ「Hacker News」のまま取り残し。サイト・README・CONTEXT で自己定義が 3 通り | 「Hacker News をはじめとする英語圏のテックコミュニティ」に統一 |
+| ソース非依存化で「何のサイトか」が薄まった | 具体（Hacker News）を残しつつ拡張余地を作る表現にした |
+| `CONTEXT.md` の `_Avoid_: スコア` が自分の定義文でも違反 | `score` は正式な構成要素なので `_Avoid_` から外した |
+| 同名のソースを 2 つ束ねられた | `dict.fromkeys` で重複を除く |
+
+### Minor（見送り、申し送りへ）
+
+`MultiFeed.close()` が 1 つ目の例外で残りを閉じ損ねる / `runtime_checkable` が非 callable を
+素通しする / `Candidate.discussion_url` が書き込み専用 / `limit` の意味が単一と Composite で違う。
+
+## 申し送り
+
+- **ロールバックは candidates.jsonl とセット。** この差分をデプロイして `daily.yml` が 1 回走ると、
+  `hn_item_id` がファイルから消える（前進移行）。**commit だけ revert すると全 298 行で `KeyError` に
+  なりパイプラインが止まる。** 戻すときは `data/candidates.jsonl` も同じコミットまで戻すこと
+- **Notion のプロパティ名（`HN URL` など）は据え置き。** HN 以外のソースを足すとラベルが実態と
+  ずれる。リネームは既存 14 ページの移行を伴うので別チケットに切る
+- **`limit` の意味が経路で違う。** `HackerNews` は `max_pages=5` まで追うので最大 5×limit 件返すが、
+  `MultiFeed` は結合後に `limit` で切る。ソースを 1 つ足すと HN の収集件数が減る
+- **`Candidate.discussion_url` は書き込み専用**。記事に出る議論 URL は `story.discussion_url` から
+  取るので、候補側の値は誰も読んでいない。記録として残している
+- **dev.to は規約に「commercial purpose」の禁止がある**（はてブ・Reddit と同じ懸念）。
+  Zenn は公式 API が無く第 6 条 3 項に無断転載の禁止がある。Qiita が最も素直。
+  **どれを実際に足すかは、この設計とは別に決める**

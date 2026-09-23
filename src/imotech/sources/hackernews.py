@@ -118,6 +118,11 @@ class HackerNews:
     # --- ReactionSource ---------------------------------------------------
 
     def fetch_reactions(self, ref: SourceRef) -> tuple[Story | None, list[Reaction]]:
+        # 別のソースで拾った候補が回ってくることがある（設定を変えた後など）。
+        # MultiFeed は name で振り分けるが、単一で使うときは誰も見ないので
+        # ここで確かめる。**ID が数値のソースが増えると別記事を掴む**
+        if ref.source != self.name:
+            return None, []
         data = self._get(f"/items/{ref.id}")
         if not data:
             return None, []

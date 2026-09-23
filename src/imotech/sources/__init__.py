@@ -31,9 +31,13 @@
 from __future__ import annotations
 
 import re
-from typing import Protocol, runtime_checkable
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Protocol, TypeVar, runtime_checkable
 
 from ..models import Reaction, SourceRef, Story
+
+_T = TypeVar("_T")
 
 
 @runtime_checkable
@@ -60,21 +64,46 @@ class ReactionSource(Protocol):
         ...
 
 
-def profile_url_pattern(feed: object) -> re.Pattern[str] | None:
-    """そのソースの投稿者プロフィール URL のパターン。持たなければ None。
+def profile_url_patterns(feed: object) -> list[re.Pattern[str]]:
+    """そのソースの投稿者プロフィール URL のパターン。持たなければ空。
 
     匿名化（`anonymize.scrub`）に渡す。**URL の形はソースごとに違う**ので
     `anonymize` 側に持たせず、ソースから取る。
+
+    **束ねたソース（MultiFeed）では子のぶんをすべて集める。** 1 つにまとめて
+    返さないのは、正規表現のフラグがソースごとに違いうるため。
     """
+    children = getattr(feed, "feeds", None)
+    if isinstance(children, list):
+        return [p for child in children for p in profile_url_patterns(child)]
     pattern = getattr(feed, "profile_url_re", None)
-    return pattern if isinstance(pattern, re.Pattern) else None
+    return [pattern] if isinstance(pattern, re.Pattern) else []
+
+
+@contextmanager
+def opened(feed: _T) -> Iterator[_T]:
+    """ソースを使い終わったら閉じる。
+
+    `StoryFeed` Protocol は `close()` を要求しない（HTTP を使わないソースもある）。
+    一方 `cli` は `with` で使いたい。**`close()` を持つソースだけ閉じる**ことで、
+    どちらの形のソースでも足せるようにする。
+    """
+    try:
+        yield feed
+    finally:
+        close = getattr(feed, "close", None)
+        if callable(close):
+            close()
 
 
 def supports_reactions(feed: object) -> bool:
     """このソースから反応を取れるか。
 
-    `isinstance(feed, ReactionSource)` は runtime_checkable な Protocol の
-    メソッド有無だけを見るので、これで足りる。呼び出し側が
-    `hasattr(feed, "fetch_reactions")` を書かずに済むよう、意図を名前にしておく。
+    **束ねたソース（MultiFeed）は子のどれかが対応していれば真。** MultiFeed 自身は
+    振り分け用の `fetch_reactions` を持つので、そのまま `isinstance` を当てると
+    子が全部非対応でも真になってしまう。
     """
+    children = getattr(feed, "feeds", None)
+    if isinstance(children, list):
+        return any(supports_reactions(child) for child in children)
     return isinstance(feed, ReactionSource)

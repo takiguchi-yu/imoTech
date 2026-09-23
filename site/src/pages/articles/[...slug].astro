@@ -2,7 +2,7 @@
 import { render } from "astro:content";
 import Base from "../../layouts/Base.astro";
 import { formatDate, publishedArticles } from "../../lib/articles";
-import { sourceLabel } from "../../lib/sources";
+import { scoreUnit, sourceLabel } from "../../lib/sources";
 
 export async function getStaticPaths() {
   // imo が書かれていない記事はここに載らない＝ページ自体が生成されない
@@ -22,7 +22,7 @@ const d = article.data;
   <article>
     <h1>{d.title}</h1>
     <p class="meta">
-      {formatDate(d.publishedAt)} ・ {sourceLabel(d.source)} {d.score} points / {d.comments} comments
+      {formatDate(d.publishedAt)} ・ {sourceLabel(d.source)} {d.score} {scoreUnit(d.source)} / {d.comments} コメント
     </p>
     {
       d.tags.length > 0 && (
