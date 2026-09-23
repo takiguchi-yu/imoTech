@@ -11,14 +11,16 @@ import json
 import sys
 import time
 from collections import Counter, defaultdict
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from .anonymize import anonymize, scrub_title, scrub_url
 from .config import REPO_ROOT, USER_AGENT, Settings, load_settings
 from .extract import ArticleFetcher
 from .links import hatena_bookmark_url
 from .llm import LLMError, build_user_prompt, load_system_instruction
-from .models import Candidate, CandidateState, SkipReason, Thresholds
+from .models import ApprovalWithoutImo, Candidate, CandidateState, SkipReason, Thresholds
 from .notion import (
     DATABASE_SCHEMA,
     NotionBlockLimitError,
@@ -632,6 +634,173 @@ def _open_notion(settings: Settings, *, dry_run: bool) -> tuple[NotionClient | N
     return client, ds
 
 
+#: imo が空の承認を差し戻すまでの猶予。先に Approved にしてから imo を書く人もいるので、
+#: 最後の編集からこれだけ経っていないページは次回に回す（publish は毎時なので、遅くとも
+#: 1 時間半ほどで差し戻る）
+BLANK_APPROVAL_GRACE = timedelta(minutes=30)
+
+
+#: 差し戻したページに残すコメント。承認した人は Actions のログを見ないので、理由は Notion に置く
+BLANK_APPROVAL_COMMENT = (
+    "imoTech: imo が空のまま Approved になっていたので、Draft に戻しました"
+    "（imo が空の記事は公開されません）。imo を書いてから、もう一度 Approved にしてください。"
+)
+
+
+@dataclass
+class BlankApprovals:
+    """imo が空の承認をどう扱ったか。publish の出力と、0 件のときの案内に使う。"""
+
+    returned: int = 0
+    """Draft に差し戻した（dry-run では差し戻す予定の）件数。"""
+    waiting: int = 0
+    """最後の編集から猶予内なので、次回に回した件数。"""
+    local: int = 0
+    """ローカルの Markdown に imo があったので、差し戻さずに Published に進めた件数。"""
+    failed: int = 0
+    """Notion の呼び出しに失敗した件数。次回また見る。"""
+    kept: int = 0
+    """差し戻さずに残した件数。
+
+    読み直したら imo が入っていた、ローカルの imo にプレースホルダが残っている、のどちらか。"""
+
+    @property
+    def total(self) -> int:
+        return self.returned + self.waiting + self.local + self.failed + self.kept
+
+
+def _local_imo_for(articles_dir: Path, page: ApprovalWithoutImo) -> str | None:
+    """その承認の記事のローカルの Markdown に、imo が書かれているか。
+
+    返り値は `"written"`（書かれている）/ `"placeholder"`（書いたがプレースホルダのコメント行が
+    残っていて、サイトには出ない）/ `None`（書かれていない・記事が無い・別の記事）。
+
+    Markdown の `## imo` に直接書く運用では、Notion の imo は空のまま Approved にされる。
+    記事は Git が正なのでサイトに出る。これを差し戻すと、再承認しても毎時また戻される。
+    """
+    path = article_path(articles_dir, page.slug)
+    if path is None or not path.exists():
+        return None
+    md = path.read_text(encoding="utf-8")
+    try:
+        # slug が衝突した別記事の imo で判定しない（cmd_publish と同じ突き合わせ）
+        if url_hash(from_markdown(md).source_url) != page.url_hash:
+            return None
+    except ValueError:
+        return None
+    if imo_of(md):
+        return "written"
+    # 書いたがコメント行を消し忘れた。「imo が空」と差し戻すと、本人は書いたつもりなので
+    # 本当の原因に気づけない（cmd_publish の同じ状態の分岐と揃える）
+    return "placeholder" if imo_section_text(md) else None
+
+
+def _return_blank_approvals(
+    client: NotionClient,
+    ds: str,
+    *,
+    articles_dir: Path,
+    dry_run: bool,
+    now: datetime | None = None,
+) -> BlankApprovals:
+    """Approved なのに imo が空のページを Draft に差し戻し、理由をコメントに残す。
+
+    **公開の判定は変えない。** imo の無い記事はもともと出ない。ここがするのは、
+    Approved のまま毎時黙って飛ばされ続けるのをやめて、Notion の上で人に知らせることだけ。
+
+    **ここの失敗で publish を止めない。** 補助の処理なので、Notion の呼び出しが失敗しても
+    `[warn]` を出して続け、imo の入った承認の公開は通す。
+    """
+    now = now or datetime.now(UTC)
+    result = BlankApprovals()
+    try:
+        pages = client.fetch_approved_without_imo(ds)
+    except NotionError as e:
+        _p(f"[warn] imo が空の承認を調べられませんでした（次回また見ます）: {e}", err=True)
+        result.failed += 1
+        return result
+
+    lines: list[str] = []
+    for page in pages:
+        name = page.slug or page.page_id
+        if page.last_edited and now - page.last_edited < BLANK_APPROVAL_GRACE:
+            result.waiting += 1
+            lines.append(
+                f"  {name}: imo が空です。編集中かもしれないので次回に見ます"
+                "（次回も空なら Draft に戻します）"
+            )
+            continue
+        local = _local_imo_for(articles_dir, page)
+        if local == "placeholder":
+            result.kept += 1
+            _p(
+                f"[warn] {name}: ローカルの Markdown の imo に"
+                "プレースホルダのコメント行が残っているため、サイトにはまだ出ません。"
+                "その行を消してください（Notion は Approved のままにします）。",
+                err=True,
+            )
+            continue
+        if local == "written":
+            result.local += 1
+            if dry_run:
+                lines.append(
+                    f"  {name}: ローカルの Markdown に imo があるので、"
+                    "Published に進めます（--dry-run のため書きません）"
+                )
+                continue
+            try:
+                client.mark_published(page.page_id)
+            except NotionError as e:
+                result.local -= 1
+                result.failed += 1
+                _p(
+                    f"[warn] imo が空の承認 {name} を Published に進められませんでした: {e}",
+                    err=True,
+                )
+                continue
+            lines.append(f"  {name}: ローカルの Markdown に imo があるので、Published に進めました")
+            continue
+        if dry_run:
+            result.returned += 1
+            lines.append(f"  [差し戻し] {name}: Draft に戻します（--dry-run のため書きません）")
+            continue
+        try:
+            # 一覧を引いてから人が imo を保存したかもしれない。書く直前に読み直す
+            if not client.is_blank_approval(page.page_id):
+                result.kept += 1
+                lines.append(f"  {name}: 読み直したら imo が入っていたので、差し戻しません")
+                continue
+            client.mark_draft(page.page_id)
+        except NotionError as e:
+            result.failed += 1
+            _p(
+                f"[warn] imo が空の承認 {name} を Draft に戻せませんでした（次回また見ます）: {e}",
+                err=True,
+            )
+            continue
+        result.returned += 1
+        lines.append(f"  [差し戻し] {name}: Draft に戻しました")
+        try:
+            client.add_comment(page.page_id, BLANK_APPROVAL_COMMENT)
+        except NotionError as e:
+            # 差し戻しは済んでいる。コメントが無くても Status は変わるので、止めない
+            _p(
+                f"[warn] 差し戻した {name} に理由のコメントを残せませんでした: {e}"
+                "（インテグレーションの「コメントの挿入」の権限を確認してください）",
+                err=True,
+            )
+
+    if result.total:
+        _p(
+            f"imo が空の承認: {result.total} 件（差し戻し {result.returned} / 編集中で次回"
+            f" {result.waiting} / ローカルの imo で公開 {result.local} / 残した {result.kept}"
+            f" / 失敗 {result.failed}）"
+        )
+        for line in lines:
+            _p(line)
+    return result
+
+
 def cmd_publish(settings: Settings, args: argparse.Namespace) -> int:
     """Notion で承認された記事の imo を、ローカルの Markdown に差し込む。
 
@@ -663,11 +832,19 @@ def cmd_publish(settings: Settings, args: argparse.Namespace) -> int:
     applied, already, skipped = 0, 0, 0
     try:
         ds = client.data_source_id(settings.notion_database_id)
+        # 公開するものより先に見る。0 件で return する分岐より前に置かないと、
+        # 承認が imo の空のものだけのとき（いちばん気づきにくい場合）に素通りする
+        blank = _return_blank_approvals(
+            client, ds, articles_dir=settings.articles_dir, dry_run=args.dry_run
+        )
         approved = client.fetch_approved(ds)
         _p(f"Notion で承認済み（imo 記入済み）: {len(approved)} 件")
         if not approved:
             _p("処理するものはありません。")
-            _p("Notion 側で Status が Approved になっているか、imo が空でないか確認してください。")
+            if blank.total:
+                _p("imo が空の承認は上のとおり扱いました。")
+            else:
+                _p("Notion 側で Status が Approved になっているか確認してください。")
             return 0
 
         for page in approved:
@@ -1111,6 +1288,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
             "Status が Approved かつ imo が空でないページを探し、その imo を "
             "site/src/content/articles/<slug>.md に差し込んで Notion 側を Published にする。"
             "記事本文は compose が書いたものが正で、Notion からは imo だけを持ってくる。"
+            "imo が空のまま Approved にされたページは Draft に差し戻し、理由をコメントに残す。"
             "ローカルに既に imo があればそちらを優先し、Notion の値は取り込まない。"
         ),
     )

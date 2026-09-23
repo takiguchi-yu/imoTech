@@ -248,3 +248,18 @@ class ApprovedPage:
     url_hash: str
     slug: str
     imo: str
+
+
+@dataclass(frozen=True)
+class ApprovalWithoutImo:
+    """Notion で Approved にされたが、imo が空（空白だけも含む）のページ。
+
+    公開はしない（imo の無い記事は出さない）。黙って飛ばし続けると、承認した人は
+    公開されない理由に気づけないので、publish が Draft に差し戻す。
+    """
+
+    page_id: str
+    url_hash: str
+    slug: str
+    last_edited: datetime | None
+    """ページを最後に編集した時刻。書いている途中のページを差し戻さないために見る。"""

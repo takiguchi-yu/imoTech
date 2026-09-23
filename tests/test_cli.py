@@ -7,9 +7,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from imotech.cli import (
+    BLANK_APPROVAL_GRACE,
     _apply_skips,
     _format_thresholds,
     _resolve_thresholds,
+    _return_blank_approvals,
     build_parser,
     cmd_compose,
     cmd_publish,
@@ -18,6 +20,7 @@ from imotech.cli import (
 from imotech.config import Settings
 from imotech.llm import GenerationResult, LLMError
 from imotech.models import (
+    ApprovalWithoutImo,
     ApprovedPage,
     ArticleDraft,
     ArticleSource,
@@ -440,9 +443,16 @@ def test_composeはdry_runなら常に0を返す(tmp_path, monkeypatch):
 class _FakeNotionClient:
     """cmd_publish が使う分だけを持つ Notion クライアント。"""
 
-    def __init__(self, approved: list[ApprovedPage]) -> None:
+    def __init__(
+        self, approved: list[ApprovedPage], blank: list[ApprovalWithoutImo] | None = None
+    ) -> None:
         self._approved = approved
+        self._blank = blank or []
         self.published: list[str] = []
+        self.drafted: list[str] = []
+        self.comments: list[tuple[str, str]] = []
+        #: 一覧を引いたあとで人が imo を保存したページ（読み直すと空でない）
+        self.filled_since: set[str] = set()
         self.closed = False
 
     def data_source_id(self, _db_id: str) -> str:
@@ -453,6 +463,18 @@ class _FakeNotionClient:
 
     def mark_published(self, page_id: str, *, when=None) -> None:
         self.published.append(page_id)
+
+    def fetch_approved_without_imo(self, _ds: str) -> list[ApprovalWithoutImo]:
+        return list(self._blank)
+
+    def is_blank_approval(self, page_id: str) -> bool:
+        return page_id not in self.filled_since
+
+    def mark_draft(self, page_id: str) -> None:
+        self.drafted.append(page_id)
+
+    def add_comment(self, page_id: str, text: str) -> None:
+        self.comments.append((page_id, text))
 
     def close(self) -> None:
         self.closed = True
@@ -617,6 +639,212 @@ def test_publishはNotionの呼び出しが失敗したら1を返す(tmp_path, m
     assert "Notion の呼び出しに失敗しました" in capsys.readouterr().err
     # 例外で抜けても finally でクライアントを閉じる
     assert client.closed
+
+
+def _publish(tmp_path, monkeypatch, client, *argv):
+    monkeypatch.setattr("imotech.cli._notion_client", lambda _s: client)
+    settings = Settings(
+        candidates_path=tmp_path / "c.jsonl",
+        articles_dir=tmp_path / "articles",
+        notion_token="t",
+        notion_database_id="d",
+    )
+    return cmd_publish(settings, build_parser().parse_args(["publish", *argv]))
+
+
+_LONG_AGO = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def _blank(page_id="p1", slug="2026-09-22-x", edited=_LONG_AGO, url_hash_="h"):
+    return ApprovalWithoutImo(page_id=page_id, url_hash=url_hash_, slug=slug, last_edited=edited)
+
+
+def test_publishはimoが空の承認をDraftに差し戻し理由をコメントに残す(tmp_path, monkeypatch, capsys):
+    # 公開はしない。承認した人は Actions のログを見ないので、理由は Notion のコメントに置く
+    client = _FakeNotionClient([], blank=[_blank()])
+    assert _publish(tmp_path, monkeypatch, client) == 0
+    assert client.drafted == ["p1"]
+    assert client.published == []
+    assert client.comments and client.comments[0][0] == "p1"
+    assert "Draft に戻しました" in client.comments[0][1]
+    out = capsys.readouterr().out
+    assert "imo が空の承認: 1 件（差し戻し 1 /" in out
+    assert "[差し戻し] 2026-09-22-x: Draft に戻しました" in out
+
+
+def test_publishは差し戻しと公開を同じ回に両方行う(tmp_path, monkeypatch):
+    # 承認 0 件で早く return する分岐より前に見ている。かつ、公開の側を邪魔しない
+    path, h = _write_article_for(tmp_path, "2026-01-01-a", "https://e.com/a")
+    ok = ApprovedPage(page_id="ok", url_hash=h, slug="2026-01-01-a", imo="所感です。")
+    client = _FakeNotionClient([ok], blank=[_blank()])
+    assert _publish(tmp_path, monkeypatch, client) == 0
+    assert client.drafted == ["p1"]
+    assert "所感です。" in path.read_text(encoding="utf-8")
+
+
+def test_publishは編集したばかりの空の承認を差し戻さない(tmp_path, monkeypatch, capsys):
+    # 先に Approved にしてから imo を書く人がいる。書いている途中で Draft に戻さない
+    just_now = datetime.now(UTC) - timedelta(minutes=5)
+    client = _FakeNotionClient([], blank=[_blank(edited=just_now)])
+    assert _publish(tmp_path, monkeypatch, client) == 0
+    assert client.drafted == [] and client.comments == []
+    out = capsys.readouterr().out
+    assert "次回も空なら Draft に戻します" in out
+    # 「Approved になっているか確認して」とは言わない（Approved にはなっている）
+    assert "上のとおり扱いました" in out
+    assert "Approved になっているか確認" not in out
+
+
+def test_猶予はちょうど30分で切れる(tmp_path):
+    now = datetime(2026, 9, 23, 12, 0, tzinfo=UTC)
+    client = _FakeNotionClient([], blank=[_blank(edited=now - BLANK_APPROVAL_GRACE)])
+    r = _return_blank_approvals(client, "ds", articles_dir=tmp_path, dry_run=False, now=now)
+    assert (r.returned, r.waiting) == (1, 0)
+    client2 = _FakeNotionClient(
+        [], blank=[_blank(edited=now - BLANK_APPROVAL_GRACE + timedelta(seconds=1))]
+    )
+    r2 = _return_blank_approvals(client2, "ds", articles_dir=tmp_path, dry_run=False, now=now)
+    assert (r2.returned, r2.waiting) == (0, 1)
+
+
+def test_publishのdry_runは差し戻さない(tmp_path, monkeypatch, capsys):
+    client = _FakeNotionClient([], blank=[_blank(slug="s")])
+    assert _publish(tmp_path, monkeypatch, client, "--dry-run") == 0
+    assert client.drafted == [] and client.comments == []
+    assert "[差し戻し] s: Draft に戻します（--dry-run のため書きません）" in capsys.readouterr().out
+
+
+def test_最後の編集時刻が分からない空の承認は差し戻す(tmp_path, monkeypatch):
+    client = _FakeNotionClient([], blank=[_blank(edited=None)])
+    _publish(tmp_path, monkeypatch, client)
+    assert client.drafted == ["p1"]
+
+
+def test_読み直したらimoが入っていたら差し戻さない(tmp_path, monkeypatch, capsys):
+    # 一覧を引いてから書くまでに人が imo を保存した。差し戻すと、その imo は Draft に残ったまま
+    # 誰にも拾われない
+    client = _FakeNotionClient([], blank=[_blank()])
+    client.filled_since.add("p1")
+    _publish(tmp_path, monkeypatch, client)
+    assert client.drafted == []
+    assert "読み直したら imo が入っていた" in capsys.readouterr().out
+
+
+def test_差し戻しの失敗でpublishを止めない(tmp_path, monkeypatch, capsys):
+    # 補助の処理なので、失敗しても imo の入った承認の公開は通す
+    class _DraftFails(_FakeNotionClient):
+        def mark_draft(self, page_id):
+            raise NotionError("HTTP 502")
+
+    path, h = _write_article_for(tmp_path, "2026-01-01-a", "https://e.com/a")
+    ok = ApprovedPage(page_id="ok", url_hash=h, slug="2026-01-01-a", imo="所感です。")
+    client = _DraftFails([ok], blank=[_blank()])
+    assert _publish(tmp_path, monkeypatch, client) == 0
+    assert "所感です。" in path.read_text(encoding="utf-8")
+    assert "Draft に戻せませんでした" in capsys.readouterr().err
+
+
+def test_空の承認を調べられなくてもpublishを止めない(tmp_path, monkeypatch, capsys):
+    class _FetchFails(_FakeNotionClient):
+        def fetch_approved_without_imo(self, _ds):
+            raise NotionError("HTTP 503")
+
+    client = _FetchFails([])
+    assert _publish(tmp_path, monkeypatch, client) == 0
+    assert "imo が空の承認を調べられませんでした" in capsys.readouterr().err
+
+
+def test_コメントを残せなくても差し戻しは済ませる(tmp_path, monkeypatch, capsys):
+    # インテグレーションに「コメントの挿入」の権限が無いと 403。Status は変わるので止めない
+    class _CommentFails(_FakeNotionClient):
+        def add_comment(self, page_id, text):
+            raise NotionError("HTTP 403 (restricted_resource)")
+
+    client = _CommentFails([], blank=[_blank()])
+    assert _publish(tmp_path, monkeypatch, client) == 0
+    assert client.drafted == ["p1"]
+    assert "コメントの挿入" in capsys.readouterr().err
+
+
+def test_ローカルにimoがある空の承認は差し戻さずPublishedに進める(tmp_path, monkeypatch):
+    # Markdown の ## imo に直接書く運用。記事はサイトに出るので、差し戻すと毎時戻され続ける
+    path, h = _write_article_for(tmp_path, "2026-01-01-a", "https://e.com/a")
+    md = path.read_text(encoding="utf-8")
+    path.write_text(set_imo(md, "ローカルで書いた所感。"), encoding="utf-8")
+    client = _FakeNotionClient([], blank=[_blank(slug="2026-01-01-a", url_hash_=h)])
+    assert _publish(tmp_path, monkeypatch, client) == 0
+    assert client.drafted == []
+    assert client.published == ["p1"]
+
+
+def test_ローカルのimoにプレースホルダが残っていれば差し戻さず知らせる(
+    tmp_path, monkeypatch, capsys
+):
+    # 「imo が空」と差し戻すと、本人は書いたつもりなので本当の原因に気づけない
+    path, h = _write_article_for(tmp_path, "2026-01-01-a", "https://e.com/a")
+    md = path.read_text(encoding="utf-8")
+    path.write_text(md.replace(IMO_PROMPT, IMO_PROMPT + "\n書いた所感。"), encoding="utf-8")
+    client = _FakeNotionClient([], blank=[_blank(slug="2026-01-01-a", url_hash_=h)])
+    assert _publish(tmp_path, monkeypatch, client) == 0
+    assert client.drafted == [] and client.published == []
+    captured = capsys.readouterr()
+    assert "プレースホルダのコメント行が残っている" in captured.err
+    assert "残した 1" in captured.out
+
+
+def test_ローカルにimoがあるときのdry_runは書かない(tmp_path, monkeypatch, capsys):
+    path, h = _write_article_for(tmp_path, "2026-01-01-a", "https://e.com/a")
+    path.write_text(set_imo(path.read_text(encoding="utf-8"), "所感。"), encoding="utf-8")
+    client = _FakeNotionClient([], blank=[_blank(slug="2026-01-01-a", url_hash_=h)])
+    assert _publish(tmp_path, monkeypatch, client, "--dry-run") == 0
+    assert client.published == [] and client.drafted == []
+    assert "Published に進めます（--dry-run のため書きません）" in capsys.readouterr().out
+
+
+def test_ローカルのimoで進めるのに失敗してもpublishを止めない(tmp_path, monkeypatch, capsys):
+    class _PublishFails(_FakeNotionClient):
+        def mark_published(self, page_id, *, when=None):
+            raise NotionError("HTTP 502")
+
+    path, h = _write_article_for(tmp_path, "2026-01-01-a", "https://e.com/a")
+    path.write_text(set_imo(path.read_text(encoding="utf-8"), "所感。"), encoding="utf-8")
+    client = _PublishFails([], blank=[_blank(slug="2026-01-01-a", url_hash_=h)])
+    assert _publish(tmp_path, monkeypatch, client) == 0
+    captured = capsys.readouterr()
+    assert "Published に進められませんでした" in captured.err
+    assert "失敗 1" in captured.out
+
+
+def test_読み直しに失敗しても差し戻さずに続ける(tmp_path, monkeypatch, capsys):
+    class _ReadFails(_FakeNotionClient):
+        def is_blank_approval(self, page_id):
+            raise NotionError("HTTP 503")
+
+    client = _ReadFails([], blank=[_blank()])
+    assert _publish(tmp_path, monkeypatch, client) == 0
+    assert client.drafted == []
+    assert "Draft に戻せませんでした" in capsys.readouterr().err
+
+
+def test_件数の内訳は見出しと合う(tmp_path, monkeypatch, capsys):
+    # 読み直しで取りやめた分も数える
+    client = _FakeNotionClient([], blank=[_blank()])
+    client.filled_since.add("p1")
+    _publish(tmp_path, monkeypatch, client)
+    out = capsys.readouterr().out
+    assert "imo が空の承認: 1 件" in out and "残した 1" in out
+    # 差し戻しを扱った回に「Approved になっているか確認して」とは言わない
+    assert "Approved になっているか確認" not in out
+
+
+def test_ローカルのimoは同じ記事のものだけ見る(tmp_path, monkeypatch):
+    # slug が衝突した別記事の imo で判定しない
+    path, _ = _write_article_for(tmp_path, "2026-01-01-a", "https://e.com/a")
+    path.write_text(set_imo(path.read_text(encoding="utf-8"), "別記事の所感。"), encoding="utf-8")
+    client = _FakeNotionClient([], blank=[_blank(slug="2026-01-01-a", url_hash_="other")])
+    _publish(tmp_path, monkeypatch, client)
+    assert client.drafted == ["p1"]
+    assert client.published == []
 
 
 # --- ソースごとの閾値 -------------------------------------------------------

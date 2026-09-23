@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 
 import httpx
 
-from .models import ApprovedPage, ArticleDraft
+from .models import ApprovalWithoutImo, ApprovedPage, ArticleDraft
 
 # 記事本文と同じ但し書きを使う。**文言は 1 か所に閉じる** — レビュー面と公開記事で
 # 違うことが書いてあると、どちらが正か分からなくなる。
@@ -433,6 +433,67 @@ class NotionClient:
                 continue
             out.append(ApprovedPage(page_id=page["id"], url_hash=url_hash, slug=slug, imo=imo))
         return out
+
+    def fetch_approved_without_imo(self, data_source_id: str) -> list[ApprovalWithoutImo]:
+        """Status が Approved なのに imo が空（空白だけも含む）のページ。
+
+        `fetch_approved` はこれを返さない（公開しない）。放っておくと Approved のまま
+        毎時黙って飛ばされ、承認した人は公開されない理由に気づけない。
+
+        空白だけの imo は Notion の `is_empty` に当たらない（`fetch_approved` が strip して
+        弾いているのと同じ理由）。なので Approved を全部引いて、こちらで判定する。
+        """
+        results = self.query(
+            data_source_id,
+            {"filter": {"property": PROP_STATUS, "select": {"equals": STATUS_APPROVED}}},
+        )
+        out: list[ApprovalWithoutImo] = []
+        for page in results:
+            props = page.get("properties") or {}
+            if _plain_text(props.get(PROP_IMO, {}).get("rich_text")).strip():
+                continue
+            edited = page.get("last_edited_time")
+            out.append(
+                ApprovalWithoutImo(
+                    page_id=page["id"],
+                    url_hash=_plain_text(props.get(PROP_URL_HASH, {}).get("rich_text")),
+                    slug=_plain_text(props.get(PROP_SLUG, {}).get("rich_text")),
+                    last_edited=datetime.fromisoformat(edited) if edited else None,
+                )
+            )
+        return out
+
+    def is_blank_approval(self, page_id: str) -> bool:
+        """そのページが**いまも** Approved かつ imo が空か。書き込む直前に読み直すのに使う。
+
+        一覧を引いてから書くまでのあいだに人が imo を保存していたら、差し戻してはいけない
+        （差し戻すと、書いた imo は Draft のページに残ったまま誰にも拾われない）。
+        """
+        page = self.request("GET", f"/pages/{page_id}")
+        props = page.get("properties") or {}
+        status = (props.get(PROP_STATUS, {}).get("select") or {}).get("name")
+        imo = _plain_text(props.get(PROP_IMO, {}).get("rich_text")).strip()
+        return status == STATUS_APPROVED and not imo
+
+    def add_comment(self, page_id: str, text: str) -> None:
+        """ページにコメントを残す。承認した人が Notion の上で理由を読めるようにする。
+
+        インテグレーションに「コメントの挿入」の権限が要る。無ければ 403
+        （https://developers.notion.com/reference/create-a-comment ）。
+        """
+        self.request(
+            "POST",
+            "/comments",
+            json={"parent": {"page_id": page_id}, "rich_text": _rich_text(text)},
+        )
+
+    def mark_draft(self, page_id: str) -> None:
+        """Status を Draft に戻す。承認を差し戻すときに使う。"""
+        self.request(
+            "PATCH",
+            f"/pages/{page_id}",
+            json={"properties": {PROP_STATUS: {"select": {"name": STATUS_DRAFT}}}},
+        )
 
     def mark_published(self, page_id: str, *, when: datetime | None = None) -> None:
         """Status を Published にし、Published At を入れる。"""

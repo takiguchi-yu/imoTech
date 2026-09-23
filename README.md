@@ -99,6 +99,10 @@ Notion の処理は黙って飛ばされ、Markdown に直接書く運用のま�
 種類は **Internal**。作成後に表示される **Internal Integration Secret**（`ntn_` で始まる文字列）を
 `.env` の `NOTION_TOKEN=` に書く。
 
+同じ画面の「機能」で **コメントの挿入** を有効にしておく。`publish` が、imo が空のまま Approved にされた
+ページを Draft に差し戻すとき、理由をそのページのコメントに残す。無効だとコメントだけが残らない
+（差し戻しは行い、ログに `[warn]` が出る）。
+
 **2. データベースを作る**
 
 Notion で新しいページを作り、そこにインラインのデータベースを置く（空でよい。プロパティは次の手順で揃える）。
@@ -137,6 +141,10 @@ uv run imotech notion-setup             # 適用
 > 要るなら Notion の UI で空欄のページを選び、`hackernews` を一括で入れる（以前の版のソースは Hacker News だけだった）。
 
 #### コードを更新したら
+
+**Notion のインテグレーションの権限が増える版もある。** imo が空の承認を差し戻すときにコメントを残す版からは
+「コメントの挿入」が要る（<https://www.notion.so/profile/integrations> → そのインテグレーション →「機能」）。
+無効だと、差し戻しは行うがコメントだけが残らない（publish.yml のログに `[warn] … コメントを残せませんでした`）。
 
 **更新を main に push したら、次の `daily.yml`（06:17 JST）より前に `notion-setup` を実行する。**
 `compose` を実際に打つのは Actions なので、ローカルで打たなくても食い違いは起きる。
@@ -241,8 +249,18 @@ uv run imotech publish   # 承認済みの件数と、差し込んだファイ�
 uv run imotech status    # imo 未記入と判定されている記事が挙がる
 ```
 
-`publish` が「0 件」なら、Notion 側で Status が `Approved` になっていないか、`imo` プロパティが空。
+`publish` が「0 件」なら、Notion 側で Status が `Approved` になっていないか、imo が空
+（そのときは下の「Approved にしたのに Draft に戻っている」）。
 「Markdown なし」と出たら、その slug の記事がローカルに無い（先に `compose` が必要）。
+
+**Approved にしたのに Draft に戻っている**
+
+imo が空のまま `Approved` にしたページは、`publish` が `Draft` に差し戻し、ページのコメントに理由を残す
+（最後の編集から 30 分経ってから。publish.yml のログには `[差し戻し]` の行が出る）。
+imo を書いてから、もう一度 `Approved` にする。
+
+Markdown の `## imo` に直接書いた記事は差し戻さず、`Published` に進める（記事は Git が正なので、
+サイトにはもう出ている）。
 
 **imo を書いたのにサイトに出ない**
 
@@ -416,6 +434,7 @@ Issue のタイトルは**最初に失敗したワークフロー名**で固定�
 | 承認された記事を**全件**飛ばした | 1 | Notion 側で `Slug` が書き換えられた、まだ `compose` していない、フロントマターが壊れている。直すまで `Status` は `Approved` のままなので、直して再実行すれば拾える |
 
 承認が 0 件のときと、1 件でも反映できたときは 0（残りは次回の実行が拾う）。
+imo が空の承認の差し戻しに失敗しても 0（`[warn]` を出して次回また見る。公開の処理は止めない）。
 
 **本文が取れなかっただけ**なら失敗にしない。元記事側の事情で、その候補は `skipped` になり
 次回は別の候補が選ばれる。

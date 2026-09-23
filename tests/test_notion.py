@@ -398,6 +398,75 @@ def test_分割されたrich_textを繋いで読む():
     assert c.fetch_approved(DS)[0].imo == "前半後半"
 
 
+def test_imoが空の承認はApprovedを全部引いてこちらで判定する():
+    # 空白だけの imo は Notion の is_empty に当たらないので、クエリでは絞らない
+    page_blank = _approved_page(imo="") | {"last_edited_time": "2026-09-22T01:00:00.000Z"}
+    page_space = _approved_page(imo="   ") | {"id": "page-s"}
+    page_ok = _approved_page() | {"id": "page-ok"}
+    c, rec = _client(
+        [
+            httpx.Response(
+                200, json={"results": [page_blank, page_space, page_ok], "has_more": False}
+            )
+        ]
+    )
+    got = c.fetch_approved_without_imo(DS)
+    import json as _json
+
+    f = _json.loads(rec.calls[0].content)["filter"]
+    assert f == {"property": PROP_STATUS, "select": {"equals": STATUS_APPROVED}}
+    assert [g.page_id for g in got] == ["page-x", "page-s"]
+    assert got[0].slug == "2026-09-22-example"
+    assert got[0].url_hash == "abc"
+    assert got[0].last_edited == datetime(2026, 9, 22, 1, 0, tzinfo=UTC)
+    assert got[1].last_edited is None
+
+
+def test_Draftへの差し戻し():
+    c, rec = _client([httpx.Response(200, json={})])
+    c.mark_draft("page-1")
+    import json as _json
+
+    assert rec.calls[0].method == "PATCH"
+    assert rec.calls[0].url.path == "/v1/pages/page-1"
+    # Status だけを書く。imo など他の列には触らない
+    assert _json.loads(rec.calls[0].content) == {
+        "properties": {PROP_STATUS: {"select": {"name": STATUS_DRAFT}}}
+    }
+
+
+def test_書く直前の読み直しはStatusとimoを見る():
+    def page(status, imo):
+        return {
+            "id": "p",
+            "properties": {
+                PROP_STATUS: {"select": {"name": status}},
+                PROP_IMO: {"rich_text": [{"plain_text": imo}] if imo else []},
+            },
+        }
+
+    for status, imo, want in [
+        (STATUS_APPROVED, "", True),
+        (STATUS_APPROVED, "  ", True),
+        (STATUS_APPROVED, "所感", False),  # 人が保存した
+        (STATUS_DRAFT, "", False),  # 人が自分で戻した
+    ]:
+        c, rec = _client([httpx.Response(200, json=page(status, imo))])
+        assert c.is_blank_approval("p") is want, (status, imo)
+        assert rec.calls[0].method == "GET" and rec.calls[0].url.path == "/v1/pages/p"
+
+
+def test_コメントはページに付ける():
+    c, rec = _client([httpx.Response(200, json={})])
+    c.add_comment("page-1", "理由")
+    import json as _json
+
+    body = _json.loads(rec.calls[0].content)
+    assert rec.calls[0].method == "POST" and rec.calls[0].url.path == "/v1/comments"
+    assert body["parent"] == {"page_id": "page-1"}
+    assert body["rich_text"][0]["text"]["content"] == "理由"
+
+
 def test_Publishedへの書き戻し():
     c, rec = _client([httpx.Response(200, json={})])
     c.mark_published("page-1", when=datetime(2026, 9, 22, 1, 2, 3, tzinfo=UTC))

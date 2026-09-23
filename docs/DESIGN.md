@@ -561,8 +561,8 @@ Notion の内容を消しても、公開済みの記事は影響を受けない�
 | プロパティ名 | 型 | 設定値 | 誰が書くか | 用途 |
 |---|---|---|---|---|
 | `Title` | Title | — | パイプライン | 記事タイトル（日本語） |
-| `Status` | **Select** | `Draft` / `Approved` / `Published` / `Rejected` | 両方 | 状態。Approved だけが人間の操作 |
-| `imo` | Rich text | — | **人間のみ** | 所感。空のまま Approved にされたら公開を拒否する |
+| `Status` | **Select** | `Draft` / `Approved` / `Published` / `Rejected` | 両方 | 状態。Approved にするのは人間だけ。imo が空の Approved は publish が Draft に差し戻す（3.2） |
+| `imo` | Rich text | — | **人間のみ** | 所感。空のまま Approved にされたら公開しない（Draft に差し戻す） |
 | `URL Hash` | Rich text | — | パイプライン | 冪等性キー。投入前の存在チェックに使う |
 | `Slug` | Rich text | — | パイプライン | `YYYY-MM-DD-<slug_hint>` |
 | `Source` | Select | 選択肢は書かない（下記） | パイプライン | 話題を拾ったソース（`hackernews` / `qiita` …）。`sources/registry.py` の名前 |
@@ -598,9 +598,16 @@ added to the data source schema」— [page-property-values](https://developers.
 **戻すとき:** コードを戻す前に、Notion の UI で列名を旧名に戻す。先にコードだけ戻すと、旧コードの
 `notion-setup` は旧名の列が無いと判断して空の列を足し、値が 2 つの列に分かれる。
 
-**列にするのは、絞り込み・並べ替えに使うか、パイプラインが読み戻す値だけ。** 他の値から作れるものや、
-ページ本文を開けば分かるものは列にしない。`Hatena URL` はこれで外した（`Source URL` から API なしで作れ —
-`links.py` の `hatena_bookmark_url` — ページ本文の出典にも同じリンクがあり、読み戻す処理も無い）。
+**列にするのは、次のどれかに当たる値だけ。2・3 に当たっていても、他の列から作れる値は列にしない**
+（1 は作れても残す。クエリで引くのに列が要る。`URL Hash` は `Source URL` から作れるが、1 に当たる）。
+
+1. パイプラインが読み戻す — `Status` / `imo` / `URL Hash` / `Slug`
+2. 表で絞り込み・並べ替えに使う — `Title` / `Source` / `Score` / `Comments` / `Tags` / `Collected At` / `Published At` / `Model`
+3. 表から直接開きたいリンク — `Source URL` / `Discussion URL`
+
+ページ本文に同じ情報があるかどうかは基準にしない（元記事の URL もモデル名も本文にあるが、表から開く・
+絞り込むのに使う）。`Hatena URL` はこれで外した。`Source URL` から API なしで作れる
+（`links.py` の `hatena_bookmark_url`）。
 はてブのリンクはページ本文と、公開記事（Markdown の `hatenaUrl`）には引き続き出る。
 
 **廃止した列は `notion-setup` が消さない。** `notion.py` の `RETIRED_PROPS` に載せ、既存の DB に残っていれば
@@ -609,8 +616,8 @@ added to the data source schema」— [page-property-values](https://developers.
 古いコードの `compose` がその列に書こうとして Notion への投入が失敗する。
 
 **廃止を戻すとき:** README の「コードを更新したら」の順（push したら次の `daily.yml` より前に `notion-setup`）で、
-空の列が足される。既存ページの値は埋まらない。埋める仕組みは無いが、`Source URL` から作れる
-（`links.py` の `hatena_bookmark_url`）うえ、ページ本文の出典に同じリンクがあるので、埋めなくても困らない。
+空の列が足される。既存ページの値は埋まらない（埋める仕組みは無い。`Source URL` から
+`links.py` の `hatena_bookmark_url` で作れる）。
 
 **`Status` を Notion の Status 型ではなく Select 型にする理由**: Status 型のオプションは API から作成できず、Notion の UI で手作業になる。Select 型なら DB 作成スクリプトで完結し、環境の再現性が取れる。グループ機能（To-do / In progress / Complete）は今回の 4 状態には不要。
 
@@ -636,6 +643,20 @@ added to the data source schema」— [page-property-values](https://developers.
 
 - `Draft` → `Approved`: **人間のみ**。これが公開の唯一の引き金
 - `Approved` → `Published`: `publish` ワークフローが commit 成功後に書き戻す
+- `Approved` → `Draft`（図には描いていない。図の上の線は人間の却下）: **imo が空（空白だけも含む）のまま Approved にされたページ**を、
+  `publish` が差し戻し、**ページのコメントに理由を残す**（承認した人は Actions のログを見ないので、理由は
+  Notion に置く）。公開はもともとしない（下の検知クエリと、空白を strip する判定で弾く）が、Approved のまま
+  毎時黙って飛ばすと、承認した人は公開されない理由に気づけない
+  - 先に Approved にしてから imo を書く人もいるので、**最後の編集から 30 分**（`cli.py` の
+    `BLANK_APPROVAL_GRACE`）経っていないページは次回に回す。書き込む直前にページを読み直し、imo が
+    入っていたら差し戻さない
+  - Markdown の `## imo` に直接書いた記事（Notion の imo は空）は差し戻さず、`Published` に進める
+  - **副作用:** 差し戻されたことに気づかず、Draft のまま imo を書いたページは公開されない
+    （`fetch_approved` は Approved しか引かない）。コメントがその手がかりになる
+  - Markdown の imo にプレースホルダのコメント行が残っている記事は、差し戻さずに `[warn]` を出す
+    （「imo が空」と差し戻すと、本人は書いたつもりなので本当の原因に気づけない）
+  - 差し戻しの失敗（Notion の 429 / 5xx など）で publish は止めない。`[warn]` を出して次回また見る
+  - コメントの投稿は、応答がタイムアウトしたときに再試行するので、まれに同じコメントが 2 つ付く（許容する）
 - `Draft` / `Approved` → `Rejected`: 人間が却下。パイプラインは二度と触らない
 - `Published` から先に遷移はない。記事を直したいときは Markdown を直接編集する（Git が正）
 
@@ -652,7 +673,8 @@ added to the data source schema」— [page-property-values](https://developers.
 }
 ```
 
-`last_edited_time` はページ単位でしか取れず「Status が変わった瞬間」を検知できない（[filter リファレンス](https://developers.notion.com/reference/post-database-query-filter)）。そこで**時刻ではなく状態そのものを引く**。`Approved` は publish が処理したら即 `Published` に変わるため、このクエリは常に「未処理の承認」だけを返す。時刻比較が不要になり、ワークフローが遅延・欠落しても取りこぼさない。
+`last_edited_time` はページ単位でしか取れず「Status が変わった瞬間」を検知できない（[filter リファレンス](https://developers.notion.com/reference/post-database-query-filter)）。そこで**時刻ではなく状態そのものを引く**。`Approved` は publish が処理したら即 `Published` に変わるため、このクエリは常に「未処理の承認」だけを返す。時刻比較が不要になり、ワークフローが遅延・欠落しても取りこぼさない
+（時刻を見るのは、imo が空の承認を差し戻すかどうかの猶予の判定だけ。公開の検知には使わない）。
 
 `imo` の空チェックをクエリに含めることで、書き忘れたまま Approved にした記事が公開されるのを仕組みで防ぐ。
 
