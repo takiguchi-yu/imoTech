@@ -11,7 +11,14 @@ import { test } from "node:test";
 import { Resvg } from "@resvg/resvg-js";
 
 import { OG_HEIGHT, OG_WIDTH, TITLE_MAX_LINES, TITLE_SIZES, TITLE_WIDTH } from "./og.ts";
-import { measureTitleLines, ogCardTreeFor, renderOgPng, renderOgSvg } from "./og-render.ts";
+import {
+  measureTitleLines,
+  ogCardTreeFor,
+  renderOgPng,
+  renderOgSvg,
+  renderTreeSvg,
+} from "./og-render.ts";
+import type { OgNode } from "./og.ts";
 
 const card = (title: string) => ({ title, source: "hackernews", score: 100, comments: 30 });
 
@@ -70,6 +77,29 @@ test("既存記事のタイトルはすべて選んだ字の大きさで 3 行�
     const size = await chosenSize(t);
     assert.ok((await measureTitleLines(t, size)) <= TITLE_MAX_LINES, `${size}px: ${t}`);
   }
+});
+
+/** カードのタイトルが**省略されずに全文描かれているか**を、行数の実測とは独立に確かめる。
+ *
+ * 同じカードを「行数の制限あり」と「実質無制限」で描き比べる。全文が入っていれば省略記号は
+ * 出ず、2 つの SVG は同じになる。**`measureTitleLines` を使わない**ので、
+ * 実測の関数そのものが誤っていても（あるいは実測とカードで組み方がずれても）ここで分かる。 */
+async function titleFullyShown(title: string): Promise<boolean> {
+  const tree = await ogCardTreeFor(card(title));
+  const unclamped = structuredClone(tree) as OgNode;
+  for (const child of unclamped.props.children as OgNode[]) {
+    if (child.props.children === title && child.props.style) child.props.style.lineClamp = 99;
+  }
+  return (await renderTreeSvg(tree)) === (await renderTreeSvg(unclamped));
+}
+
+test("既存記事のタイトルはカードで省略されずに全文が出る", async () => {
+  for (const t of existingTitles()) assert.ok(await titleFullyShown(t), t);
+});
+
+test("省略されたかの判定は、本当に長いタイトルでは省略を検出する", async () => {
+  // 上のテストが素通りでないこと（描き比べで違いが出ること）の確認
+  assert.equal(await titleFullyShown("あ".repeat(120)), false);
 });
 
 test("見積もりで外れていた記事は 64px ではなく 56px を選ぶ", async () => {

@@ -81,7 +81,14 @@ export async function ogCardTreeFor(card: OgCard): Promise<OgNode> {
 /** カードを SVG に描く。**フォントに無い字の検出はここで起きる**ので、
  * 字の欠けだけを見たいテストは PNG 化（時間の大半）を飛ばしてこちらを呼ぶ。 */
 export async function renderOgSvg(card: OgCard, missing?: MissingGlyphs): Promise<string> {
-  return satori((await ogCardTreeFor(card)) as unknown as SatoriElement, {
+  return renderTreeSvg(await ogCardTreeFor(card), missing);
+}
+
+/** 組んだ要素の木を、カードの大きさの SVG に描く。
+ *
+ * テストが木を少し変えて描き比べる（省略の有無など）ために分けてある。 */
+export async function renderTreeSvg(tree: OgNode, missing?: MissingGlyphs): Promise<string> {
+  return satori(tree as unknown as SatoriElement, {
     width: OG_WIDTH,
     height: OG_HEIGHT,
     fonts: fonts(),
