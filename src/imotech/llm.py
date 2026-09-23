@@ -288,8 +288,9 @@ def _to_glossary(raw: object) -> list[GlossaryEntry]:
         desc = _WHITESPACE_RUN_RE.sub(" ", str(item.get("description", ""))).strip()
         if not term or not desc:
             continue
-        # imo の判定に使う文言が紛れると、記事が「imo 未記入」に見え続ける
-        # （render.py の has_imo は Markdown 全文を走査する）
+        # imo のプレースホルダの文言を記事に持ち込まない。`has_imo` は imo 節の中しか
+        # 見ないので判定は汚れないが、「このコメント行を消すまで公開されません」という
+        # 運営の内部指示が用語の説明として読者に出るのは記事として成立しない
         if IMO_PLACEHOLDER in term + desc or IMO_SENTINEL in term + desc:
             continue
         out.append(GlossaryEntry(term=term, description=desc))
