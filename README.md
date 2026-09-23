@@ -22,7 +22,7 @@ Hacker News で議論を呼んだ英語圏のテック記事を、**元記事の
 | **M1 ローカルで収集〜生成が通る** | **完了** |
 | **ローカル通し（Notion を飛ばして localhost まで）** | **完了** — `compose` が Markdown を書き、Astro でサイトが出る |
 | **M2 Notion 連携** | **完了** — `notion-setup` / `notion-sync` / `publish`。Notion を使わない運用も引き続き成立する |
-| **M3 GitHub Actions で定時実行** | **完了** — 手動実行・失敗通知・自動 commit を実測済み（完了条件 24 件のうち 22 件）。cron の初回実行は 2026-09-23 06:17 JST |
+| **M3 GitHub Actions で定時実行** | **完了** — cron の自動実行まで確認した（24 件のうち 23 件。残り 1 件は 60 日待たないと実測できない） |
 | **M4 公開（Cloudflare Workers）** | **完了** — 承認から公開まで通し、cron の自動実行も確認した |
 
 ## セットアップ

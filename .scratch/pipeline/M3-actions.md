@@ -2,7 +2,7 @@
 
 ローカルで通ったパイプラインを cron で毎日回す。シークレットを Actions に移し、失敗を検知できる状態にする。
 
-**Status:** 完了（完了条件 24 件のうち 22 件を実測で充足。残り 2 件は時間待ちで、論拠は末尾に記録）
+**Status:** 完了（完了条件 24 件のうち 23 件を実測で充足。残り 1 件は 60 日待たないと実測できないもので、論拠は末尾に記録）
 **Blocked by:** M2（Notion 投入が通ること）
 
 ## 完了条件
@@ -62,10 +62,12 @@
 
 ### 通し
 - [x] `workflow_dispatch` で手動実行し、Notion に下書きが入り `candidates.jsonl` が commit された
-- [ ] 翌日、cron で自動実行されたことを Actions の履歴で確認した
-      **未達（時間待ち）。** 次回の cron は 2026-09-23 06:17 JST。確認方法:
-      `gh run list --workflow daily.yml --json event,status,conclusion,createdAt` で
-      `event == "schedule"` の行があること
+- [x] 翌日、cron で自動実行されたことを Actions の履歴で確認した
+      （`schedule success 2026-09-22T23:35:50Z`。commit は `c90bc6d chore: update candidates (2026-09-23)`。
+      **ただし予定は 21:17 UTC で、実行は 23:35 UTC＝約 2 時間 18 分遅れた。**
+      公式の "The `schedule` event can be delayed during periods of high loads" の実例で、
+      `publish.yml` で観測した drop と合わせて、**cron の時刻は当てにできない**ことが裏づけられた。
+      この設計では実害が無い — 状態を時刻ではなく `state` で持ち、`MAX_AGE_HOURS=96` の猶予がある）
 - [ ] 自動実行の commit があることで、**public repo の schedule が 60 日無活動で自動停止する条件に当たらない**ことを確認した
       **未達（60 日待たないと実測できない）。** 論拠は揃っている — 公式が停止条件を
       "no repository activity has occurred in 60 days" と定めており
