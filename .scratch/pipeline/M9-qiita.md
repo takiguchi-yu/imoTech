@@ -3,7 +3,7 @@
 M7 で「ソースを足すのに `sources/` の中だけで済む」形に再設計した。**その主張を実地で
 検証すること**が、このチケットの裏の目的。
 
-**Status:** 完了
+**Status:** 完了（`ct-verifier` で完了条件 30 件を機械検証し ✅ 30 / ❌ 0 / ⚠️ 0）
 **Blocked by:** なし（M7 が完了していれば動く）
 
 ## 調べて分かったこと（2026-09-23 に一次情報で確認）
@@ -164,3 +164,69 @@ Qiita のコメントで論調が作れないなら、同じ技術の議論を�
 - **`fetch_stories` が全滅しても例外を投げず `collect` が exit 0 になる。**
   Qiita 固有ではなく Hacker News も同じ（既存の性質）。ソースが増えた今は
   「片方だけ死んでいる」が見えにくいので、別チケットで扱う
+
+## 検証（2026-09-23、コミット `21be133`）
+
+`ct-verifier` に完了条件 30 件を 1 件ずつ渡し、**チェック済みかどうかを根拠にせず**実行で判定させた。
+
+| | 件数 |
+|---|---|
+| ✅ 充足 | 30 |
+| ❌ 未充足 | 0 |
+| ⚠️ 機械検証不能 | 0 |
+
+**PII の回帰確認（最優先）**
+
+| 検査 | 結果 |
+|---|---|
+| `PROFILE_URL_RE` が `/likes` `/followers` `/stocks` `/contributions` `/items` に当たる | ✅ |
+| 同パターンが `/items/<20桁hex>`（元記事）・`tags/` `api/` に当たらない | ✅ |
+| 3 文字以下・英単語と同じ綴りの著者 ID が URL から伏せられる（`abc` `ken` `what` `code`） | ✅ 全て伏せられる |
+| 束ねたソースで両方のパターンを集める | ✅ 2 件 |
+| `scrub` / `scrub_title` / `scrub_url` / `anonymize` / `handles_of` の引数省略 | ✅ 5 つとも `TypeError` |
+| **cli の配線をわざと壊すと回帰テストが落ちる** | ✅ **5 failed / 45 passed**（壊した後 `git checkout` で復元、`git status` クリーン） |
+| 今回の差分に実在アカウント ID が無い | ✅ フィクスチャは `alice` / `bob` / `carol123` / `someuser` / `someone` のみ |
+
+**設定ミスの検出（すべて 1 行のメッセージ + exit 2、トレースバックなし）**
+
+| 入力 | 出力 |
+|---|---|
+| `IMOTECH_SOURCE_THRESHOLDS='{壊れた'` | `... JSON として読めません` |
+| `{"qiita":{"minscore":50}}` | `... 'qiita' に知らない項目 minscore があります。使えるのは min_comments, min_score` |
+| `IMOTECH_SOURCES=nosuchsource` | `... 知らないソース 'nosuchsource' があります。使えるのは hackernews, qiita` |
+| `{"hackernwes":{"min_score":1}}` | `ValueError: ... 知らないソース hackernwes` |
+
+**後方互換**
+
+- 本番 `data/candidates.jsonl` 298 行がそのまま読める（本番ファイルは無変更）
+- 既存記事 12 件が `load_article` を通る
+- `IMOTECH_MIN_SCORE=77 IMOTECH_MIN_COMMENTS=5` が Hacker News に従来どおり効く
+
+**実データでの end-to-end**
+
+```
+qiita から 33 件取得 / 新規 33 件を追加
+閾値 hackernews: score>=100 かつ comments>=30 / qiita: score>=3 かつ comments>=0 → 選出 1 件
+    本文 8000 文字 (trafilatura) / 反応 0 件
+URL: https://qiita.com/[ユーザー名]/items/7306e0b1a9207e08d86e   ← 著者ハンドルが伏せられている
+**この記事には反応がありません。** `discourse` は出力しないでください。
+スキーマの properties: ['digest', 'glossary', 'slug_hint', 'tags', 'title']   ← discourse が外れている
+```
+
+**その他**
+
+| 検査 | 結果 |
+|---|---|
+| `uv run ruff format --check . && uv run ruff check .` | 61 files already formatted / 指摘なし |
+| `uv run pytest -q` | 439 passed |
+| `cd site && npm test` | tests 17 / pass 17 |
+| `npm run build` / `check-unpublished.mjs` | 8 page(s) built / 漏れなし |
+| GitHub Actions CI（`21be133`） | サイト・パイプラインとも success |
+| `cli.py` が具象を import / インスタンス化しない | ✅ 0 件（コメント内の固有名詞 2 件のみ） |
+
+### 検証で新たに分かった申し送り
+
+- **`tests/test_anonymize.py` に実在ハンドルが 12 箇所ある**（`tests/test_sources.py` にも 4 箇所）。
+  いずれも**今回より前**から入っている（`git log -S` で M1 の `5e6d077` と M7 まで遡れる）。
+  実データで起きた匿名化の事故を再現するために入れたもので、コメントに経緯が書いてある。
+  組織規定「PII を含めない」に照らすと精査の価値があるが、**今回の差分の範囲外**なので手を付けていない
