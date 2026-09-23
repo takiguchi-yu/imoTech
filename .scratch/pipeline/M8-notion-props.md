@@ -76,3 +76,24 @@ Status / imo / URL Hash / Slug しか読まないので、改名の影響を受�
 
 3 周目の修正は上限に達したので、レビューに回さず自分で確かめた（`compose` が全件失敗で `return 1` し、
 `daily.yml` の commit ステップに `if:` が無く失敗時は走らないことをコードで確認。actionlint 通過）。
+
+## 後続: Hatena URL 列の廃止（2026-09-23、f0fc62d）
+
+ユーザーの問い「notion db のテーブルに hatena url があるけど合ってる？」を受けて、列ごと外した。
+**列にするのは、絞り込み・並べ替えに使うか、パイプラインが読み戻す値だけ**（`docs/DESIGN.md` 3.1）。
+
+- [x] スキーマと新しいページの投入から外した。ページ本文の出典のはてブのリンク、Markdown の `hatenaUrl`、サイトのリンクは残る（テスト）
+- [x] 廃止した列は `notion-setup` が消さず、`RETIRED_PROPS` で名指しして知らせる（テスト、本番 dry-run で ★ が出ることを削除前に確認）
+- [x] 本番の列を削除: 反映の順序は **push → CI 緑（f0fc62d）→ 実行中・待機中の daily.yml が 0 件 → 削除**（20:47 JST）。
+      先に消すと main の古いコードの compose がその列に書こうとして全件失敗するので、レビューで順序を逆にした
+- [x] 削除前の控え: 12 ページすべての `Hatena URL` が `hatena_bookmark_url(Source URL)` と一致（作り直せる。失う情報なし）
+- [x] 削除後: 15 列 → 14 列。`Hatena URL` 以外の 12 列の値は 12 ページとも前後で一致。`notion-setup --dry-run` は「何もしません」
+- [x] `uv run ruff check .` / `uv run pytest -q`（491 件）/ CI success
+
+レビューで直したもの（2 周）: 反映の順序（push してから消す）、★ の文言（残しても影響なし、消してよい条件）、
+compose の全件失敗の案内（Actions なら daily を回し直す、手元なら notion-sync — 前回の文言は手元の実行と食い違っていた）、
+廃止を戻すときの手順。
+
+申し送り:
+- `notion-setup` の ★ の出力と終了コードを確かめる CLI のテストは無い（旧名の ★ と同じく既存の慣習どおり）
+- compose が `hatena_bookmark_url` で組み立てる経路（`cli.py`）をテストが通っていない。空になっても気づけない
