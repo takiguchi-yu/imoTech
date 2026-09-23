@@ -109,8 +109,8 @@ def test_束ねたソースでもプロフィールURLのパターンを集め�
     feed = MultiFeed([FeedOnly(), HackerNews()])
     patterns = profile_url_patterns(feed)
     assert len(patterns) == 1  # 子のうち HackerNews だけが持つ
-    out = scrub("see https://news.ycombinator.com/user?id=patio11", frozenset(), patterns)
-    assert "patio11" not in out
+    out = scrub("see https://news.ycombinator.com/user?id=dkingsley22", frozenset(), patterns)
+    assert "dkingsley22" not in out
 
 
 # --- Registry（Factory Method）---------------------------------------------
@@ -249,8 +249,8 @@ def test_束ねたソースでもQiitaのプロフィールURLを集める():
         patterns = profile_url_patterns(feed)
     assert len(patterns) == 2
     out = scrub(
-        "a https://news.ycombinator.com/user?id=patio11 b https://qiita.com/carol123",
+        "a https://news.ycombinator.com/user?id=dkingsley22 b https://qiita.com/carol123",
         frozenset(),
         patterns,
     )
-    assert "patio11" not in out and "carol123" not in out
+    assert "dkingsley22" not in out and "carol123" not in out

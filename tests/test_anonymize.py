@@ -96,12 +96,12 @@ def test_空文字になった反応は落とす():
 def test_URLのパス区画に一致するハンドルは伏せる():
     # github.com/<handle>/repo の形で投稿者名が残っていた
     out = anonymize(
-        [_r(1, "DanMcInerney", "see https://github.com/DanMcInerney/tool")],
+        [_r(1, "EveMacAlister", "see https://github.com/EveMacAlister/tool")],
         limit=5,
         profile_url_res=[],
         extra_handles=frozenset(),
     )
-    assert "DanMcInerney" not in out[0].text
+    assert "EveMacAlister" not in out[0].text
     assert "github.com" in out[0].text
 
 
@@ -130,12 +130,12 @@ def test_プロフィールURLは伏せる():
     # スレッド参加者でないハンドルも載るので、handles 集合では捕まらない。
     # URL の形はソースごとに違うので、パターンはソース側（hackernews.PROFILE_URL_RE）が持つ
     out = anonymize(
-        [_r(1, "a", "see https://news.ycombinator.com/user?id=patio11")],
+        [_r(1, "a", "see https://news.ycombinator.com/user?id=dkingsley22")],
         limit=5,
         profile_url_res=[PROFILE_URL_RE],
         extra_handles=frozenset(),
     )
-    assert "patio11" not in out[0].text
+    assert "dkingsley22" not in out[0].text
     assert PLACEHOLDER in out[0].text
 
 
@@ -174,23 +174,23 @@ def test_4文字未満のハンドルは伏せない():
 def test_投稿者の個人ドメインは伏せる():
     # https://<handle>.ca/... のような本人のサイト。PII の信号が強い
     out = anonymize(
-        [_r(1, "srcreigh", "see https://srcreigh.ca/posts/kata/")],
+        [_r(1, "dmarshall", "see https://dmarshall.ca/posts/kata/")],
         limit=5,
         profile_url_res=[],
         extra_handles=frozenset(),
     )
-    assert "srcreigh" not in out[0].text
+    assert "dmarshall" not in out[0].text
     assert "/posts/kata/" in out[0].text
 
 
 def test_wwwつきの個人ドメインも伏せる():
     out = anonymize(
-        [_r(1, "srcreigh", "see https://www.srcreigh.ca/x")],
+        [_r(1, "dmarshall", "see https://www.dmarshall.ca/x")],
         limit=5,
         profile_url_res=[],
         extra_handles=frozenset(),
     )
-    assert "srcreigh" not in out[0].text
+    assert "dmarshall" not in out[0].text
 
 
 # --- 元記事の URL・タイトル（検証役が見つけた漏れの回帰テスト）----------------
@@ -200,8 +200,8 @@ def test_元記事URLのドメインが投稿者名と一致したら伏せる()
     # ブログ主が自分の記事を HN に投稿してコメントもする、というのはよくある
     from imotech.anonymize import scrub_url
 
-    rs = [_r(1, "buchodi", "There are specific details about how it works")]
-    assert scrub_url("https://www.buchodi.com/chatgpt-ad-collector/", rs, frozenset()) == (
+    rs = [_r(1, "finchley", "There are specific details about how it works")]
+    assert scrub_url("https://www.finchley.com/chatgpt-ad-collector/", rs, frozenset()) == (
         "https://www.[ユーザー名].com/chatgpt-ad-collector/"
     )
 
@@ -231,7 +231,7 @@ def test_build_user_promptが匿名化済みのURLを使う():
 
     story = Story(
         ref=SourceRef("hackernews", "1"),
-        url="https://buchodi.com/a",
+        url="https://finchley.com/a",
         title="T",
         engagement=Engagement(score=300, comments=90),
         created_at=datetime.now(UTC),
@@ -242,5 +242,5 @@ def test_build_user_promptが匿名化済みのURLを使う():
         [AnonymizedReaction("C1", "反応", 0, 1)],
         display_url="https://[ユーザー名].com/a",
     )
-    assert "buchodi" not in p
+    assert "finchley" not in p
     assert "https://[ユーザー名].com/a" in p

@@ -173,8 +173,8 @@ def _scrub_in_url(url: str, handles: frozenset[str]) -> str:
     ホスト名の先頭ラベルが投稿者名と一致する場合も伏せる。本人の個人ドメイン
     （https://<handle>.ca/... など）であることがほとんどで、PII の信号が強い。
 
-    - https://github.com/DanMcInerney/repo → パス区画なので伏せる
-    - https://srcreigh.ca/posts/x          → 先頭ホストラベルなので伏せる
+    - https://github.com/EveMacAlister/repo → パス区画なので伏せる
+    - https://dmarshall.ca/posts/x          → 先頭ホストラベルなので伏せる
     - https://e.com/p?ref=newsletter.com   → クエリ値の一部なので伏せない
 
     **パス区画には短さ・頻出語の除外を当てない。** `_MIN_HANDLE_LEN` と `_COMMON_WORDS` は
@@ -212,7 +212,7 @@ def scrub_url(url: str, reactions: list[Reaction], extra_handles: frozenset[str]
 
     ブログ主が自分の記事を HN に投稿してコメントもする、というのはよくある。
     その場合ドメイン名が投稿者ハンドルと一致し、URL をそのまま渡すと
-    プロンプトに投稿者名が載る（実データで buchodi.com / buchodi を検出した）。
+    プロンプトに投稿者名が載る（実データで finchley.com / finchley を検出した）。
 
     **記事プラットフォームでは URL そのものに著者名が入る**（Qiita の
     `qiita.com/<user_id>/items/<id>`）。この場合、著者が 1 度もコメントして
