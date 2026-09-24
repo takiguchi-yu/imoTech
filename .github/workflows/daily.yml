@@ -25,7 +25,9 @@ jobs:
   pipeline:
     name: 収集と生成
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 1 本あたり 1〜1.5 分（M1 の実測は 5 本で 7.3 分、503 のリトライで伸びる）。
+    # 既定の 10 本と問い合わせの予算（最大 5 分）が収まるように取る
+    timeout-minutes: 40
     # **ソースの設定は job レベルに置く。** collect と compose の両方に効かせる
     # 必要があり、片方だけに入れると「収集は HN・選別は Qiita」のような噛み合わない
     # 状態になって、エラーも出ないまま毎日 0 本になる
@@ -107,7 +109,7 @@ jobs:
           echo "::error::3 回試しても push できませんでした"
           exit 1
 
-      # timeout（20 分）や手動キャンセルでは failure() は真にならない。
+      # timeout（40 分）や手動キャンセルでは failure() は真にならない。
       # cancelled() は「ワークフローがキャンセルされたら true」
       # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
       - name: 失敗を通知する
@@ -135,6 +137,6 @@ jobs:
             - **`git pull --rebase` が競合**
               → `publish.yml` と同じ記事ファイルを同時に触った。`git pull --rebase` で解決して
               から `gh workflow run daily.yml`
-            - **timeout（20 分）またはキャンセル**
+            - **timeout（40 分）またはキャンセル**
               → pending が育ちすぎている。`uv run imotech stats` で件数を見て、compose ステップの
               `env` に `IMOTECH_MAX_PROBES_PER_RUN` を足して絞る

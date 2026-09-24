@@ -301,7 +301,8 @@ uv run imotech status   # imo 未記入と判定されている記事が挙が�
 | `IMOTECH_MIN_SCORE` | 100 | 注目度のスコア下限。**ソース固有の既定を持たないソースにだけ効く**（下記） |
 | `IMOTECH_MIN_COMMENTS` | 30 | コメント数の下限。同上 |
 | `IMOTECH_SOURCE_THRESHOLDS` | なし | ソースごとの閾値を JSON で上書きする。例: `{"qiita": {"min_score": 50, "min_comments": 0}}` |
-| `IMOTECH_MAX_DRAFTS_PER_RUN` | 5 | 1 回の実行で作る下書きの上限 |
+| `IMOTECH_MAX_DRAFTS_PER_RUN` | 10 | 1 回の実行で作る下書きの上限 |
+| `IMOTECH_TOPICS_PATH` | パッケージ内の `topics.toml`（`src/imotech/topics.toml`） | 記事にする候補を優先する話題の定義（AI・クラウド・言語・ガジェット/IT ニュース）。**当たる候補を先に記事にし、当たらない候補は穴埋めに回す**。語の足し方はファイルの冒頭を参照 |
 | `IMOTECH_MAX_AGE_HOURS` | 96 | これを過ぎて処理されなかった候補は打ち切る |
 | `IMOTECH_MAX_PROBES_PER_RUN` | 60 | 1 回の実行でソースに問い合わせる候補の上限。**Qiita を使うときは 40 以下に下げる**（下記） |
 | `IMOTECH_PROBE_BUDGET` | 300 | 問い合わせ全体の予算（秒）。超えたら打ち切る |
@@ -416,8 +417,8 @@ Issue のタイトルは**最初に失敗したワークフロー名**で固定�
 直したら Issue を close する。次の失敗で新しい Issue が立つ。
 
 **何が「失敗」になるか**は `compose` の終了コードで決まる。境目は「この実行で記事化が 0 件
-だったか」と「Notion が使えたか」。5 本のうち 1 本が生成に失敗しただけなら失敗にしない
-（その候補は pending に残り、次回が拾う）。非 0 になるのは:
+だったか」と「Notion が使えたか」。10 本のうち 1 本が生成に失敗しただけなら失敗にしない
+（その候補は pending に残り、次回が拾う。実行の概要に `::warning` が出る）。非 0 になるのは:
 
 | 条件 | 終了コード | 直し方 |
 |---|---|---|

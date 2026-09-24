@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 from imotech.models import Candidate, CandidateState, SkipReason, SourceRef, Thresholds
-from imotech.pipeline import mark_skipped, matured_candidates, select
+from imotech.pipeline import mark_skipped, matured_candidates, probe_targets, select
 
 NOW = datetime(2026, 9, 21, 12, 0, tzinfo=UTC)
 
@@ -239,3 +239,71 @@ def test_知らないソースの候補は共通の閾値で判定する():
         max_age_hours=96,
     )
     assert [c.url_hash for c in s.selected] == ["g"]
+
+
+# --- 話題で優先する（docs/DESIGN.md 4.1c） ---------------------------------
+
+
+def _pick(cands, topical: set[str], max_drafts: int) -> list[str]:
+    s = _select(
+        cands,
+        now=NOW,
+        min_score=100,
+        min_comments=0,
+        max_drafts=max_drafts,
+        max_age_hours=96,
+        topics_of=lambda c: ["AI"] if c.url_hash in topical else [],
+    )
+    return [c.url_hash for c in s.selected]
+
+
+def test_話題に当たる候補を注目度より先に選ぶ():
+    cands = [_c(30, 900, 0, h="hot"), _c(31, 150, 0, h="ai1"), _c(32, 120, 0, h="ai2")]
+    assert _pick(cands, {"ai1", "ai2"}, 2) == ["ai1", "ai2"]
+
+
+def test_話題の候補が足りなければ注目度順に穴埋めする():
+    # 0 本の日を作らない
+    cands = [_c(30, 900, 0, h="hot"), _c(31, 500, 0, h="warm"), _c(32, 150, 0, h="ai1")]
+    assert _pick(cands, {"ai1"}, 3) == ["ai1", "hot", "warm"]
+
+
+def test_話題でも閾値を満たさなければ選ばない():
+    cands = [_c(30, 900, 0, h="hot"), _c(31, 50, 0, h="ai_low")]
+    assert _pick(cands, {"ai_low"}, 2) == ["hot"]
+
+
+def test_話題を渡さなければ従来どおり注目度順():
+    cands = [_c(30, 150, 0, h="a"), _c(31, 900, 0, h="b")]
+    s = _select(cands, now=NOW, min_score=100, min_comments=0, max_drafts=2, max_age_hours=96)
+    assert [c.url_hash for c in s.selected] == ["b", "a"]
+
+
+def _pc(h, score, topical):
+    c = _c(30, h=h)
+    c.score_at_collect = score
+    return c, topical
+
+
+def test_問い合わせは話題の候補を先にしつつ枠の一部を話題外に残す():
+    # 全部を話題の候補に回すと、話題外は現在値を取られないまま期限切れになり、穴埋めが起きない
+    pairs = [_pc(f"on{i}", 10 + i, True) for i in range(10)] + [
+        _pc(f"off{i}", 900 + i, False) for i in range(10)
+    ]
+    topical = {c.url_hash for c, t in pairs if t}
+    got = probe_targets([c for c, _ in pairs], limit=8, topics_of=lambda c: c.url_hash in topical)
+    on = [c.url_hash for c in got if c.url_hash in topical]
+    off = [c.url_hash for c in got if c.url_hash not in topical]
+    assert len(got) == 8
+    assert len(off) == 2  # 枠の 25%
+    assert on[0] == "on9"  # 組の中は収集時スコアの降順
+    assert off[0] == "off9"
+
+
+def test_片方が足りなければもう一方に回す():
+    only_on = [_pc(f"on{i}", i, True)[0] for i in range(10)]
+    got = probe_targets(only_on, limit=8, topics_of=lambda c: True)
+    assert len(got) == 8
+    only_off = [_pc(f"off{i}", i, False)[0] for i in range(10)]
+    got = probe_targets(only_off, limit=8, topics_of=lambda c: False)
+    assert len(got) == 8

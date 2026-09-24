@@ -130,6 +130,51 @@ def test_429は同じモデルで再試行してから次へ落ちる():
     assert r.model == "m2"
 
 
+def test_1日の上限の429は同じモデルで再試行しない():
+    # その日のうちは戻らない。再試行しても 1 回ずつ無駄になる
+    daily = errors.ClientError(
+        429,
+        {
+            "error": {
+                "message": "quota exceeded",
+                "details": [
+                    {
+                        "violations": [
+                            {"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}
+                        ]
+                    }
+                ],
+            }
+        },
+    )
+    g = _gen({"m1": daily}, attempts=3)
+    r = _run(g)
+    assert g._client.models.calls == ["m1", "m2"]
+    assert r.model == "m2"
+
+
+def test_1日の上限に当たったモデルは次の候補でも叩かない():
+    daily = errors.ClientError(
+        429, {"error": {"message": "x", "details": [{"quotaId": "RequestsPerDayPerModel"}]}}
+    )
+    g = _gen({"m1": daily}, attempts=3)
+    _run(g)
+    g._client.models.calls.clear()
+    _run(g)
+    assert "m1" not in g._client.models.calls
+
+
+def test_全モデルが上限なら理由の分かる失敗にする():
+    daily = errors.ClientError(
+        429, {"error": {"message": "x", "details": [{"quotaId": "RequestsPerDayPerModel"}]}}
+    )
+    g = _gen({"m1": daily, "m2": daily, "m3": daily}, attempts=1)
+    with pytest.raises(LLMError):
+        _run(g)
+    with pytest.raises(LLMError, match="1 日の上限"):
+        _run(g)
+
+
 def test_5xxもリトライ対象():
     g = _gen({"m1": errors.ServerError(503, {"error": {"message": "down"}})}, attempts=2)
     assert _run(g).model == "m2"

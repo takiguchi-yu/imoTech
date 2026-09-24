@@ -33,6 +33,7 @@ from .notion import (
     unrenamed_old_props,
 )
 from .pipeline import mark_skipped, matured_candidates, select
+from .pipeline import probe_targets as choose_probe_targets
 from .render import (
     article_path,
     ensure_use_case_note,
@@ -48,6 +49,7 @@ from .render import (
 from .sources import opened, profile_url_patterns, supports_reactions, thresholds_for
 from .sources.registry import available, create_feed
 from .store import CandidateStore
+from .topics import DEFAULT_TOPICS_PATH, load_topics, match_topics
 from .urlhash import url_hash
 
 
@@ -214,16 +216,33 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
             sleep=settings.llm_sleep_seconds,
         )
 
+    # 話題（docs/DESIGN.md 4.1c）。外部に問い合わせる前に読む — 壊れた定義で
+    # 問い合わせの予算を使い切ってから落ちないように
+    topics_path = settings.topics_path or DEFAULT_TOPICS_PATH
+    try:
+        topics = load_topics(topics_path)
+    except (OSError, ValueError) as e:
+        _p(f"話題の定義を読めません（{topics_path}）: {e}", err=True)
+        return 2
+    topics_by_hash = {c.url_hash: match_topics(c.title, c.url, topics) for c in matured}
+    matched = sum(1 for v in topics_by_hash.values() if v)
+    _p(f"話題に当たる候補: {matched}/{len(matured)} 件（{', '.join(t.name for t in topics)}）")
+
     # 現在値を取り直す。収集時の値では「まだ誰も反応していない」段階を見てしまう。
     # ただし全件に問い合わせると pending が育ったとき Actions の timeout を食い潰すので、
     # 件数と時間の両方に天井を置く。
-    probe_targets = sorted(matured, key=lambda c: (-c.score_at_collect, c.collected_at))[
-        : settings.max_probes_per_run
-    ]
+    # 話題に当たる候補を先に、ただし枠の一部は当たらない候補に残す（pipeline.probe_targets）
+    probe_targets = choose_probe_targets(
+        matured,
+        limit=settings.max_probes_per_run,
+        topics_of=lambda c: topics_by_hash[c.url_hash],
+    )
     if len(probe_targets) < len(matured):
+        on = sum(1 for c in probe_targets if topics_by_hash[c.url_hash])
         _p(
-            f"問い合わせは収集時スコアの上位 {len(probe_targets)} 件に絞ります"
-            f"（熟成済み {len(matured)} 件中、上限 IMOTECH_MAX_PROBES_PER_RUN）"
+            f"問い合わせは {len(probe_targets)} 件に絞ります（話題あり {on} / なし"
+            f" {len(probe_targets) - on}。熟成済み {len(matured)} 件中、"
+            "上限 IMOTECH_MAX_PROBES_PER_RUN）"
         )
 
     deadline = time.monotonic() + settings.probe_budget_seconds
@@ -283,6 +302,7 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
         max_drafts=max_drafts,
         max_age_hours=settings.max_age_hours,
         evaluated=evaluated,
+        topics_of=lambda c: topics_by_hash.get(c.url_hash, []),
     )
     _p(
         f"閾値 {_format_thresholds(thresholds, settings)} → "
@@ -319,6 +339,8 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
         for i, c in enumerate(sel.selected, 1):
             story = stories_by_hash[c.url_hash]
             _p(f"\n=== [{i}/{len(sel.selected)}] {c.title[:70]}")
+            hit = topics_by_hash.get(c.url_hash)
+            _p(f"    話題: {', '.join(hit)}" if hit else "    話題: なし（穴埋め）")
             _p(f"    {c.url}")
             _p(f"    points={c.score_at_evaluate} comments={c.comments_at_evaluate}")
 
@@ -479,6 +501,15 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
         _p("生成に失敗した候補は pending のまま残しました。次回の実行で再挑戦します。")
     else:
         _p("新しく記事化できたものはありませんでした。")
+    if failed and drafted:
+        # 一部だけの失敗は終了コード 0（Issue にしない）。Gemini の 1 日の上限に当たって
+        # 毎日後半が失敗し続けても気づけるよう、実行の概要に注釈を出す
+        _p(
+            f"::warning::Gemini での生成に {len(failed)}/{len(sel.selected)} 件失敗しました"
+            "（pending のまま次回に回ります）。毎日続くなら 1 日の上限（RPD）に当たっている"
+            "可能性があるので、IMOTECH_MAX_DRAFTS_PER_RUN を下げてください",
+            err=True,
+        )
 
     # ここから終了コードの判定。無人実行（daily.yml）はこれだけを見て Issue を立てる。
     #

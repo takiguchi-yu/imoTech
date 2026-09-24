@@ -1,0 +1,49 @@
+# 記事にする候補を優先する「話題」（docs/DESIGN.md 4.1c）。
+#
+# 閾値を満たす候補のうち、ここの語がタイトルか URL のホスト名に当たるものを先に記事にする。
+# 当たらない候補は捨てず、当たる候補が足りない日の穴埋めに回す。
+#
+# - 英数字の語は大文字小文字を区別せず、**語の境界で**当てる（"ai" は "said" に当たらない）
+# - 日本語など英数字以外を含む語は、部分一致で当てる
+# - 別のファイルを使うときは IMOTECH_TOPICS_PATH に置き場所を書く
+#
+# 普通の英単語と重なる語は、誤って当たるので入れない。2 語にして絞る
+#   例: "go" → "golang"、"react" → "react.js" / "react native"、"galaxy" → "samsung galaxy"、
+#       "pixel" → "google pixel"、"windows" → "windows 11"、"agents" → "ai agents"
+#   "meta" "chip" "tesla" は "Meta-analysis" "Chip in" "Nikola Tesla" に当たるので外した
+
+[[topic]]
+name = "AI"
+keywords = [
+  "ai", "llm", "llms", "gpt", "chatgpt", "openai", "anthropic", "claude", "gemini", "codex",
+  "copilot", "deepmind", "mistral", "llama", "qwen", "deepseek", "hugging face", "huggingface",
+  "ai agent", "ai agents", "coding agent", "coding agents", "agentic", "mcp", "rag",
+  "transformer", "stable diffusion", "machine learning", "neural network",
+  "生成ai", "生成 ai", "エージェント",
+]
+
+[[topic]]
+name = "クラウド"
+keywords = [
+  "aws", "amazon web services", "s3", "lambda", "cloudflare", "vercel", "netlify", "gcp",
+  "google cloud", "azure", "kubernetes", "k8s", "docker", "serverless", "terraform", "heroku",
+  "fly.io", "supabase", "firebase", "postgres", "postgresql",
+]
+
+[[topic]]
+name = "言語・フレームワーク"
+keywords = [
+  "typescript", "javascript", "node.js", "nodejs", "deno", "bun", "next.js", "nextjs",
+  "vue", "svelte", "astro", "rust", "golang", "python", "java", "kotlin", "c++", "zig", "wasm",
+  "react.js", "reactjs", "react native", "react 19",
+  "webassembly", "ruby", "rails", "php", "elixir", "haskell", "compiler",
+]
+
+[[topic]]
+name = "ガジェット・IT ニュース"
+keywords = [
+  "apple", "iphone", "ipad", "macbook", "mac", "macs", "macos", "ios", "android", "samsung",
+  "google pixel", "pixel phone", "galaxy s", "samsung galaxy", "microsoft", "windows 10",
+  "windows 11", "google", "nvidia", "gpu", "gpus", "amd", "intel", "semiconductor", "tsmc",
+  "smartphone", "smartphones", "laptop", "laptops", "ガジェット",
+]

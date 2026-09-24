@@ -241,6 +241,8 @@ class DraftGenerator:
         self._system = load_system_instruction()
         # 1 回目の生成前には待たない。2 回目以降だけ間隔を空ける
         self._called_once = False
+        #: この実行のうちに 1 日の上限に当たったモデル。以降の候補では叩かない
+        self._exhausted: set[str] = set()
 
     def generate(
         self,
@@ -279,6 +281,8 @@ class DraftGenerator:
         last_error: Exception | None = None
 
         for model in self.model_chain:
+            if model in self._exhausted:
+                continue
             for attempt in range(1, self.max_attempts + 1):
                 total_attempts += 1
                 try:
@@ -301,6 +305,13 @@ class DraftGenerator:
                     print(f"  [warn] {model}: HTTP {code}（試行 {attempt}/{self.max_attempts}）")
                     if not retryable:
                         break  # 400 などはリトライしても同じ。次のモデルへ
+                    if code == 429 and _is_daily_quota(e):
+                        # 1 日の上限は太平洋時間の 0 時まで戻らない。再試行しても 1 回ずつ
+                        # 無駄になるだけなので、次のモデルへ移る
+                        # （https://ai.google.dev/gemini-api/docs/api-errors ）
+                        print(f"  [warn] {model}: 1 日の上限に達しています。次のモデルへ移ります")
+                        self._exhausted.add(model)
+                        break
                     if attempt < self.max_attempts:
                         self._sleeper(2**attempt)
                 except (ValueError, KeyError, json.JSONDecodeError) as e:
@@ -309,7 +320,23 @@ class DraftGenerator:
                     if attempt >= self.max_attempts:
                         break
 
+        if last_error is None and self._exhausted:
+            raise LLMError(
+                f"全 {len(self.model_chain)} モデルが 1 日の上限に達しています"
+                "（太平洋時間の 0 時に戻る）"
+            )
         raise LLMError(f"全 {len(self.model_chain)} モデルで生成に失敗: {last_error}")
+
+
+def _is_daily_quota(e: Exception) -> bool:
+    """429 が 1 日あたりの上限（RPD）によるものか。
+
+    429 は 1 分あたりの上限（待てば戻る）でも 1 日の上限（その日は戻らない）でも返る。
+    応答の詳細にある quotaId が "…PerDay…" のときを 1 日の上限とみなす。**この形は
+    公式ドキュメントで確認できていない**（実際の 429 の応答で確かめる）。判定できない
+    ときは従来どおり再試行する側に倒す。
+    """
+    return "perday" in str(e).lower()
 
 
 def _parse(resp: object) -> dict:

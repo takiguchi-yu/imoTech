@@ -70,7 +70,7 @@ flowchart TB
 
 | ワークフロー | トリガー | 責務 | timeout |
 |---|---|---|---|
-| `daily.yml` | cron `17 21 * * *` (UTC) = 毎日 06:17 JST + `workflow_dispatch` | collect → compose | 20 分 |
+| `daily.yml` | cron `17 21 * * *` (UTC) = 毎日 06:17 JST + `workflow_dispatch` | collect → compose | 40 分 |
 | `publish.yml` | cron `23 * * * *` = 毎時 23 分 + `workflow_dispatch` | Approved 検知 → commit → ビルド → 成果物の検査 → `wrangler deploy` → Notion を Published に | 10 分 |
 | `ci.yml` | `push` / `pull_request` | lint + test | 10 分 |
 
@@ -736,7 +736,7 @@ paragraph 生成モデル: <model> / 生成日時: <generatedAt>
 MATURATION_HOURS = 24  # 収集からこの時間が経った候補だけを評価する
 MIN_SCORE = 100  # HN の points 下限
 MIN_COMMENTS = 30  # コメント数の下限
-MAX_DRAFTS_PER_RUN = 5  # 1 回の実行で作る下書きの上限
+MAX_DRAFTS_PER_RUN = 10  # 1 回の実行で作る下書きの上限（2026-09-24 に 5 から増やした。ユーザーの判断）
 MAX_AGE_HOURS = 96  # これを過ぎた pending は skipped(below_threshold) にする
 ```
 
@@ -746,7 +746,7 @@ compose の処理順:
   2. collected_at + MATURATION_HOURS <= now のものだけ残す
   3. Algolia で現在の points / comments を取り直す（収集時の値ではなく現在値で判定）
   4. points >= MIN_SCORE かつ comments >= MIN_COMMENTS を満たすものを残す
-  5. points の降順に並べ、上位 MAX_DRAFTS_PER_RUN 件だけ処理する
+  5. 話題に当たる候補を先、その中は points の降順に並べ、上位 MAX_DRAFTS_PER_RUN 件だけ処理する（4.1c）
   6. 残った候補のうち collected_at + MAX_AGE_HOURS を過ぎたものは skipped にする
      （それ以外は pending のまま翌日に持ち越す）
 ```
@@ -754,6 +754,27 @@ compose の処理順:
 **閾値を満たす候補が 0 件の日は、記事を 1 本も作らない**。これは意図した挙動で、AdSense の Publisher Policies が広告を許さないとしている "low-value content" / "embedded or copied content from others without additional commentary, curation, or otherwise adding value"（[Publisher Policies](https://support.google.com/adsense/answer/9335564)）を避けるための設計判断。更新頻度より 1 本あたりの密度を取る。
 
 **現在値で判定する理由**: 収集時点のスコアは「まだ誰も反応していない」段階の値で、熟成の判定に使えない。Algolia の `/api/v1/items/<id>` は 1 リクエストでコメント木ごと取れるため、判定と反応取得を同じレスポンスで済ませられる。
+
+### 4.1c 話題で優先する
+
+「AI・クラウド・言語・ガジェット/IT ニュースの記事をもっと」を受けて（2026-09-24、ユーザーの判断）、
+閾値を満たす候補のうち**話題に当たるものを先に記事にする**。当たらない候補は捨てず、当たる候補が
+`MAX_DRAFTS_PER_RUN` に足りない日の穴埋めに使う（0 本の日を作らない）。
+
+| 決めたこと | 理由 |
+|---|---|
+| 話題の語は `src/imotech/topics.toml`（`IMOTECH_TOPICS_PATH` で差し替え） | 語は運用で増減する。コードを触らずに直せるように |
+| タイトルと URL のホスト名だけで判定する | 本文を取る前（候補の段階）に決める必要がある。`openai.com` のような発信元もホスト名で当たる |
+| 英数字の語は語の境界で当てる（後ろの数字は許す: "GPT5" "Qwen3"）。日本語は部分一致。全角は NFKC で半角にそろえる | "ai" が "said" に、"mac" が "machine" に当たらないように。普通の英単語と重なる語は 2 語にして絞る（"react" → "react native"、"galaxy" → "samsung galaxy"、"agents" → "ai agents"）。"meta" "chip" "tesla" は外した |
+| **問い合わせ（現在値の取り直し）も話題の候補を先にする。ただし枠の 25% は話題外に残す**（`pipeline.probe_targets`） | 問い合わせは `MAX_PROBES_PER_RUN` 件まで。収集時スコアの上位だけにすると、スコアの低い話題の候補は現在値が無く選べない。逆に全部を話題に回すと、話題外の候補は一度も現在値を取られないまま期限切れで打ち切られ、穴埋めが起きない（話題の候補は本番で 102/281 件あり、枠 40 件を常に埋める。2026-09-24 の dry-run）。どちらかが余ればもう一方に回す |
+| 閾値は変えない | 質を落とさずに話題を寄せる。HN は閾値を満たす候補が十分ある（`stats` で 84%） |
+
+1 日の本数は 5 → 10 に増やした（**人が imo を書く対象も 1 日 10 本に増える**。imo が空の記事は公開されない）。
+戻すときは `daily.yml` の `env` に `IMOTECH_MAX_DRAFTS_PER_RUN: "5"` を足す。Gemini の無料枠の 1 日の上限（RPD）は公式ドキュメントに数値が無く、
+AI Studio でしか見えない（<https://ai.google.dev/gemini-api/docs/rate-limits>）。上限に当たっても、
+生成に失敗した候補は pending のまま翌日に回る。**1 日の上限による 429 は同じモデルで再試行せず、
+次のモデルへ移り、その実行のあいだは以降の候補でもそのモデルを飛ばす**（その日のうちは戻らない <https://ai.google.dev/gemini-api/docs/api-errors>）。
+429 が 1 日の上限かどうかは、応答の quotaId に "PerDay" が入るかで見ている（この形は未確認）。
 
 ### 4.1b 閾値はソースごとに違う
 
@@ -822,7 +843,7 @@ MODEL_CHAIN = [
   # 全モデルで失敗 → その候補を pending のまま残し、失敗を記録して次の候補へ
 ```
 
-**スロットリング**: 記事間に固定 6 秒の sleep を入れる。5 本でも合計 30 秒で、20 分の timeout に対して十分な余裕がある。
+**スロットリング**: 記事間に固定 6 秒の sleep を入れる。10 本でも合計 60 秒。timeout は 1 本あたり 1〜1.5 分（M1 の実測は 5 本で 7.3 分）と問い合わせの予算（最大 5 分）を見て 40 分にしてある。
 
 **RPD/RPM の公称値は確認できない**: Google は[レート制限の数値を公式ドキュメントから削除](https://ai.google.dev/gemini-api/docs/rate-limits)し（"Rate limits ... can be viewed in Google AI Studio"）、AI Studio のログイン後ページでしか公開していない。さらに**この環境では組織の管理者が AI Studio を無効化**しており、そのページも開けない。
 
@@ -834,7 +855,9 @@ MODEL_CHAIN = [
 | 503（一時的な不可用） | **20 件**（3.8=8 / 3.7=6 / 3.6=6） |
 | 生成成功 | 3 件（うち 2 件は 10 回目の試行で成功） |
 
-**無料枠は「枠」ではなく「空き」で律速されている。** よって `MAX_DRAFTS_PER_RUN = 5` を下げる理由は無い。一方で**モデルフォールバックが無いと成立しない**（2 件は 3.8 → 3.7 → 3.6 → 3.5 と落ちてようやく通った）。鎖を短くしてはならない。
+**無料枠は「枠」ではなく「空き」で律速されている**（5 本/日の時点の実測）。2026-09-24 に 10 本/日へ増やした（4.1c）。
+10 本での所要時間と、1 日の上限（RPD）に当たるかは**未実測**。一部の候補が生成に失敗した日は、`compose` が
+`::warning` を実行の概要に出す（終了コードは 0）。毎日続くなら `IMOTECH_MAX_DRAFTS_PER_RUN` を下げる。一方で**モデルフォールバックが無いと成立しない**（2 件は 3.8 → 3.7 → 3.6 → 3.5 と落ちてようやく通った）。鎖を短くしてはならない。
 
 **匿名化の強制**: `llm.py` は `anonymize.py` を通していない生の反応を受け取れない型にする（`AnonymizedReaction` 型を引数に取る）。無料枠は[規約](https://ai.google.dev/gemini-api/terms)に "human reviewers may read, annotate, and process your API input and output... Do not submit sensitive, confidential, or personal information to the Unpaid Services." とあるため、PII の送信を実装レベルで防ぐ。
 

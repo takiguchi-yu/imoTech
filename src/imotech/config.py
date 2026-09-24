@@ -62,7 +62,9 @@ class Settings(BaseSettings):
     maturation_hours: int = Field(default=24, validation_alias="IMOTECH_MATURATION_HOURS")
     min_score: int = Field(default=100, validation_alias="IMOTECH_MIN_SCORE")
     min_comments: int = Field(default=30, validation_alias="IMOTECH_MIN_COMMENTS")
-    max_drafts_per_run: int = Field(default=5, validation_alias="IMOTECH_MAX_DRAFTS_PER_RUN")
+    max_drafts_per_run: int = Field(default=10, validation_alias="IMOTECH_MAX_DRAFTS_PER_RUN")
+    # 記事にする候補を優先する話題の定義（src/imotech/topics.toml。docs/DESIGN.md 4.1c）
+    topics_path: Path | None = Field(default=None, validation_alias="IMOTECH_TOPICS_PATH")
     # ソースごとの閾値の上書き。JSON で指定する
     # 例: '{"qiita": {"min_score": 50, "min_comments": 0}}'
     # 指定が無いソースは、そのソース自身の既定（`Qiita.default_thresholds` など）を使い、

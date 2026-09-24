@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -34,6 +34,38 @@ def matured_candidates(
     return [c for c in pending if c.collected_at <= deadline]
 
 
+#: 問い合わせの枠のうち、話題に当たらない候補に残しておく割合（docs/DESIGN.md 4.1c）
+OFF_TOPIC_PROBE_SHARE = 0.25
+
+
+def probe_targets(
+    matured: list[Candidate],
+    *,
+    limit: int,
+    topics_of: Callable[[Candidate], Sequence[str]],
+) -> list[Candidate]:
+    """現在値を取り直す（問い合わせる）候補を、上限 limit 件まで選ぶ。
+
+    **話題に当たる候補を先にする。** 問い合わせから漏れた候補は現在値が無く選別で選べないので、
+    収集時スコアの上位だけにすると、スコアの低い話題の候補が永久に選ばれない。
+
+    **ただし枠の OFF_TOPIC_PROBE_SHARE は話題に当たらない候補に残す。** 全部を話題の候補に
+    回すと、当たらない候補は現在値を一度も取られないまま期限切れで打ち切られ、
+    「当たる候補が足りない日の穴埋め」が起きなくなる。どちらかが余れば、もう一方に回す。
+    それぞれの組の中は収集時スコアの降順。
+    """
+
+    def by_score(cs: list[Candidate]) -> list[Candidate]:
+        return sorted(cs, key=lambda c: (-c.score_at_collect, c.collected_at))
+
+    on = by_score([c for c in matured if topics_of(c)])
+    off = by_score([c for c in matured if not topics_of(c)])
+    off_quota = min(len(off), int(limit * OFF_TOPIC_PROBE_SHARE))
+    on_take = min(len(on), limit - off_quota)
+    off_take = min(len(off), limit - on_take)
+    return on[:on_take] + off[:off_take]
+
+
 def select(
     matured: list[Candidate],
     *,
@@ -43,8 +75,13 @@ def select(
     max_drafts: int,
     max_age_hours: int,
     evaluated: set[str] | None = None,
+    topics_of: Callable[[Candidate], Sequence[str]] | None = None,
 ) -> Selection:
     """閾値を満たす上位 max_drafts 件を選ぶ。
+
+    **話題に当たる候補を先にする**（topics_of が渡されたとき。docs/DESIGN.md 4.1c）。
+    当たらない候補は捨てず、当たる候補が max_drafts に足りないときだけ穴埋めに使う。
+    同じ組の中は注目度の降順。
 
     **閾値はソースごとに引く。** Hacker News は議論そのものが目的の場なので
     コメントが数百付くが、記事プラットフォーム（Qiita など）ではほぼ 0 件で、
@@ -77,6 +114,7 @@ def select(
 
     passing.sort(
         key=lambda c: (
+            0 if topics_of is not None and topics_of(c) else 1,
             -(c.score_at_evaluate if c.score_at_evaluate is not None else c.score_at_collect),
             c.collected_at,
         )
