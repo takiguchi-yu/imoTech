@@ -736,7 +736,7 @@ paragraph 生成モデル: <model> / 生成日時: <generatedAt>
 MATURATION_HOURS = 24  # 収集からこの時間が経った候補だけを評価する
 MIN_SCORE = 100  # HN の points 下限
 MIN_COMMENTS = 30  # コメント数の下限
-MAX_DRAFTS_PER_RUN = 10  # 1 回の実行で作る下書きの上限（2026-09-24 に 5 から増やした。ユーザーの判断）
+MAX_DRAFTS_PER_RUN = 10  # 1 回の実行で作る下書きの上限（2026-09-24 に 5 から）
 MAX_AGE_HOURS = 96  # これを過ぎた pending は skipped(below_threshold) にする
 ```
 
