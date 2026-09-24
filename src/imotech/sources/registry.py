@@ -10,16 +10,29 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Iterable
 
 from . import StoryFeed
+from .feed import CLOUDFLARE, VERCEL, BlogFeed
+from .github import GitHub
 from .hackernews import HackerNews
 from .qiita import Qiita
+
+
+def _github(**kwargs: object) -> GitHub:
+    # トークンは任意。GitHub Actions では secrets.GITHUB_TOKEN を GITHUB_TOKEN で渡す
+    # （無くても動くが、認証なしは 60 req/h）
+    return GitHub(token=os.environ.get("GITHUB_TOKEN", ""), **kwargs)  # type: ignore[arg-type]
+
 
 #: 名前 → 生成関数。生成関数は `user_agent` をキーワードで受け取る。
 _FACTORIES: dict[str, Callable[..., StoryFeed]] = {
     HackerNews.name: HackerNews,
     Qiita.name: Qiita,
+    GitHub.name: _github,
+    CLOUDFLARE.name: lambda **kw: BlogFeed(CLOUDFLARE, **kw),
+    VERCEL.name: lambda **kw: BlogFeed(VERCEL, **kw),
 }
 
 

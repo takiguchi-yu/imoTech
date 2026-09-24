@@ -46,7 +46,16 @@ from .render import (
     title_problems,
     write_article,
 )
-from .sources import opened, profile_url_patterns, supports_reactions, thresholds_for
+from .sources import (
+    opened,
+    per_run_caps,
+    profile_url_patterns,
+    provided_article,
+    provides_articles,
+    reserved_slots,
+    supports_reactions,
+    thresholds_for,
+)
 from .sources.registry import available, create_feed
 from .store import CandidateStore
 from .topics import DEFAULT_TOPICS_PATH, load_topics, match_topics
@@ -232,10 +241,15 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
     # ただし全件に問い合わせると pending が育ったとき Actions の timeout を食い潰すので、
     # 件数と時間の両方に天井を置く。
     # 話題に当たる候補を先に、ただし枠の一部は当たらない候補に残す（pipeline.probe_targets）
+    with opened(create_feed(settings.source_names, user_agent=USER_AGENT)) as f:
+        reserved = reserved_slots(f)
+        caps = per_run_caps(f)
     probe_targets = choose_probe_targets(
         matured,
         limit=settings.max_probes_per_run,
         topics_of=lambda c: topics_by_hash[c.url_hash],
+        reserved_sources=frozenset(reserved),
+        caps=caps,
     )
     if len(probe_targets) < len(matured):
         on = sum(1 for c in probe_targets if topics_by_hash[c.url_hash])
@@ -303,6 +317,8 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
         max_age_hours=settings.max_age_hours,
         evaluated=evaluated,
         topics_of=lambda c: topics_by_hash.get(c.url_hash, []),
+        reserved=reserved,
+        caps=caps,
     )
     _p(
         f"閾値 {_format_thresholds(thresholds, settings)} → "
@@ -329,27 +345,44 @@ def cmd_compose(settings: Settings, args: argparse.Namespace) -> int:
     notion_ok: list[Candidate] = []
     notion_failed: list[Candidate] = []
     notion_block_limit = False
-    with ArticleFetcher(
-        user_agent=USER_AGENT,
-        timeout=settings.http_timeout_seconds,
-        max_bytes=settings.max_response_bytes,
-        max_chars=settings.max_article_chars,
-        profile_url_res=profile_url_patterns(feed),
-    ) as fetcher:
+    with (
+        opened(create_feed(settings.source_names, user_agent=USER_AGENT)) as article_feed,
+        ArticleFetcher(
+            user_agent=USER_AGENT,
+            timeout=settings.http_timeout_seconds,
+            max_bytes=settings.max_response_bytes,
+            max_chars=settings.max_article_chars,
+            profile_url_res=profile_url_patterns(feed),
+        ) as fetcher,
+    ):
         for i, c in enumerate(sel.selected, 1):
             story = stories_by_hash[c.url_hash]
             _p(f"\n=== [{i}/{len(sel.selected)}] {c.title[:70]}")
             hit = topics_by_hash.get(c.url_hash)
             _p(f"    話題: {', '.join(hit)}" if hit else "    話題: なし（穴埋め）")
             _p(f"    {c.url}")
-            _p(f"    points={c.score_at_evaluate} comments={c.comments_at_evaluate}")
+            # 単位はソースで違う（HN は points、Qiita は LGTM、GitHub は stars）。
+            # 枠のソース（公式ブログ）は注目度を持たない
+            if c.ref.source in reserved:
+                _p(f"    [{c.ref.source}] 枠で選出（注目度を持たないソース）")
+            else:
+                _p(
+                    f"    [{c.ref.source}] 注目度={c.score_at_evaluate} "
+                    f"コメント={c.comments_at_evaluate}"
+                )
 
             # 記事の著者は伏せ字の対象に入れる。記事プラットフォームでは
             # **元記事の URL も本文も著者本人のもの**（qiita.com/<user_id>/items/<id>）
             # なので、著者が 1 度もコメントしていなくても伏せる必要がある
             extra_handles = frozenset(h for h in (story.author,) if h)
 
-            article = fetcher.fetch(c.url, extra_handles)
+            # 本文を自分で渡すソース（GitHub の README）は、ページを取りに行かない。
+            # 問い合わせに使った feed はもう閉じているので、本文用に開き直したものを使う
+            if provides_articles(article_feed, c.ref.source):
+                text = provided_article(article_feed, c.ref)
+                article = fetcher.from_text(text, "api", extra_handles) if text else None
+            else:
+                article = fetcher.fetch(c.url, extra_handles)
             if article is None:
                 _p("    → 本文を取得できないため飛ばします")
                 no_content.append(c)

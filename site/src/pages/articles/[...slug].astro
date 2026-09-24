@@ -3,7 +3,7 @@ import { render } from "astro:content";
 import Base from "../../layouts/Base.astro";
 import { formatDate, publishedArticles } from "../../lib/articles";
 import { OG_HEIGHT, OG_WIDTH, ogImagePath } from "../../lib/og";
-import { hasSeparateDiscussion, scoreUnit, sourceLabel } from "../../lib/sources";
+import { engagementText, hasSeparateDiscussion, sourceLabel } from "../../lib/sources";
 
 export async function getStaticPaths() {
   // imo が書かれていない記事はここに載らない＝ページ自体が生成されない
@@ -46,7 +46,7 @@ const eyecatch = { src: ogImagePath(article.id), width: OG_WIDTH, height: OG_HEI
       fetchpriority="high"
     />
     <p class="meta">
-      {formatDate(d.publishedAt)} ・ {sourceLabel(d.source)} {d.score} {scoreUnit(d.source)} / {d.comments} コメント
+      {formatDate(d.publishedAt)} ・ {engagementText(d.source, d.score, d.comments)}
     </p>
     {
       d.tags.length > 0 && (

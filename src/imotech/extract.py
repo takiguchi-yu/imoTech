@@ -168,6 +168,15 @@ class ArticleFetcher:
         print(f"  [info] 本文も og:description も取れませんでした: {final_url}", flush=True)
         return None
 
+    def from_text(
+        self, text: str, via: str, extra_handles: frozenset[str] = frozenset()
+    ) -> ArticleSource:
+        """ソースが自分で渡した本文（GitHub の README など）を、取得した本文と同じ形にする。
+
+        **同じ匿名化と字数の上限を通す**（ページを取った場合と差を作らない）。
+        """
+        return self._as_source(text.strip(), via, extra_handles)
+
     def _as_source(self, text: str, via: str, extra_handles: frozenset[str]) -> ArticleSource:
         # 元記事側にも PII は載る。実データでメールアドレスが残っていた。
         #

@@ -1,6 +1,6 @@
 # imoTech
 
-Hacker News や Qiita で話題になった技術記事を、**元記事の要旨 + 議論の論調 + imo（運営者の所感）** として日本語で公開するキュレーションメディアの自動化パイプライン。
+Hacker News や Qiita、GitHub、各社の公式ブログ（Cloudflare・Vercel）で話題になった技術記事を、**元記事の要旨 + 議論の論調 + imo（運営者の所感）** として日本語で公開するキュレーションメディアの自動化パイプライン。
 
 収集から下書き生成までは全自動で、**公開の可否は人間だけが決める**。
 
@@ -296,7 +296,7 @@ uv run imotech status   # imo 未記入と判定されている記事が挙が�
 |---|---|---|
 | `IMOTECH_CANDIDATES_PATH` | `data/candidates.jsonl` | 候補ストアの場所。ローカル検証で本番ストアを汚さないために使う |
 | `IMOTECH_ARTICLES_DIR` | `site/src/content/articles` | 生成した記事の Markdown の書き出し先 |
-| `IMOTECH_SOURCES` | `hackernews` | 使うソース。カンマ区切りで複数指定すると両方から集める。**使える名前は `hackernews` と `qiita`**（実体は [`src/imotech/sources/registry.py`](./src/imotech/sources/registry.py) の `_FACTORIES`） |
+| `IMOTECH_SOURCES` | `hackernews` | 使うソース。カンマ区切りで複数指定すると、指定したすべてから集める。**使える名前は `hackernews` / `qiita` / `github` / `cloudflare-blog` / `vercel-blog`**（実体は [`src/imotech/sources/registry.py`](./src/imotech/sources/registry.py) の `_FACTORIES`） |
 | `IMOTECH_MATURATION_HOURS` | 24 | 収集からこの時間が経った候補だけを評価する |
 | `IMOTECH_MIN_SCORE` | 100 | 注目度のスコア下限。**ソース固有の既定を持たないソースにだけ効く**（下記） |
 | `IMOTECH_MIN_COMMENTS` | 30 | コメント数の下限。同上 |
@@ -344,14 +344,15 @@ gh run watch
 
 ### ソースを増やすとき
 
-使えるのは `hackernews` と `qiita`（実体は [`src/imotech/sources/registry.py`](./src/imotech/sources/registry.py) の `_FACTORIES`）。
+使えるのは `hackernews` / `qiita` / `github` / `cloudflare-blog` / `vercel-blog`（実体は [`src/imotech/sources/registry.py`](./src/imotech/sources/registry.py) の `_FACTORIES`）。
 
 **ローカルで試す**（本番の候補ストアを汚さない）:
 
 ```bash
-IMOTECH_SOURCES=hackernews,qiita \
+IMOTECH_SOURCES=hackernews,qiita,github,cloudflare-blog,vercel-blog \
 IMOTECH_CANDIDATES_PATH=/tmp/try.jsonl \
-  uv run imotech collect
+GITHUB_TOKEN=$(gh auth token) \
+  uv run imotech collect   # GITHUB_TOKEN は任意（無いと GitHub の API が 60 req/h）
 ```
 
 **本番（毎朝の Actions）で有効にする**には [`daily.yml`](./.github/workflows/daily.yml) の
@@ -360,9 +361,19 @@ IMOTECH_CANDIDATES_PATH=/tmp/try.jsonl \
 
 ```yaml
     env:
-      IMOTECH_SOURCES: hackernews,qiita   # ← ここ
+      IMOTECH_SOURCES: hackernews,qiita,github,cloudflare-blog,vercel-blog   # ← ここ
       IMOTECH_MAX_PROBES_PER_RUN: "40"    # ← Qiita を足すなら下げる（下記）
 ```
+
+#### GitHub と公式ブログ（M17）
+
+| ソース | 何を記事にするか | 選び方 | 注意 |
+|---|---|---|---|
+| `github` | 作成から 30 日以内で stars の多いリポジトリ。本文は README（API で取る） | stars 1,000 以上。**1 日 2 本まで**、収集は 1 回 10 件まで（stars は HN の points と桁が違い、注目度順だと枠を独占するため） | `GITHUB_TOKEN` があれば使う（無いと 60 req/h）。所有者のハンドルは伏せる。論調の節は無い |
+| `cloudflare-blog` / `vercel-blog` | 公式ブログの新着（Vercel は `/blog/` の記事だけ。changelog は除く） | 注目度が無いので、**新着があれば各ブログ 1 日 1 本まで枠を確保**（10 本の内数） | robots.txt が AI への入力を明示的に許している（`Content-Signal: ai-input=yes`）。論調の節は無い |
+
+ガジェット系メディア（The Verge・TechCrunch・Ars Technica・Engadget）、dev.to、Product Hunt は、
+規約か robots.txt で AI への入力・商用・自動取得が認められていないので使わない（docs/DESIGN.md 4.1d）。
 
 #### Qiita を足すときの注意
 
@@ -375,7 +386,7 @@ IMOTECH_CANDIDATES_PATH=/tmp/try.jsonl \
 | **記事の形** | 反応が 0 件の記事は**議論の論調の節を持たない**（要旨 + imo + 用語になる） |
 | **未対応** | アクセストークンによる 1000 req/h への引き上げは、`Qiita(token=...)` まで実装済みだが**設定から渡す配線がまだ無い** |
 
-**Qiita は本番で有効にしてある**（`daily.yml` の `IMOTECH_SOURCES: hackernews,qiita`）。
+**Qiita・GitHub・公式ブログは本番で有効にしてある**（値は `daily.yml` の `IMOTECH_SOURCES` を見る）。
 非認証の 60 req/h に収めるため `IMOTECH_MAX_PROBES_PER_RUN` は 40 に下げてある。
 
 ### Secrets の登録

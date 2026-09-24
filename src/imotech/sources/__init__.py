@@ -64,6 +64,90 @@ class ReactionSource(Protocol):
         ...
 
 
+@runtime_checkable
+class ArticleProvider(Protocol):
+    """記事の本文を自分で渡す側。**持たないソースが普通**で、呼び出し側は元記事の URL を
+    取りに行く（`extract.ArticleFetcher`）。GitHub のように、ページ（HTML）を取りに
+    行ってはいけないが API で本文（README）を取れるソースだけが実装する。
+    """
+
+    name: str
+
+    def fetch_article(self, ref: SourceRef) -> str | None: ...
+
+
+def provided_article(feed: object, ref: SourceRef) -> str | None:
+    """そのソースが本文を自分で渡すなら、その本文。渡さないなら None。
+
+    束ねたソース（MultiFeed）では、名前の一致する子に聞く。
+    """
+    children = getattr(feed, "feeds", None)
+    if isinstance(children, list):
+        for child in children:
+            if getattr(child, "name", None) == ref.source:
+                return provided_article(child, ref)
+        return None
+    if getattr(feed, "name", None) != ref.source or not isinstance(feed, ArticleProvider):
+        return None
+    return feed.fetch_article(ref)
+
+
+def provides_articles(feed: object, source: str) -> bool:
+    """そのソースが本文を自分で渡すか（元記事の URL を取りに行ってはいけないか）。"""
+    children = getattr(feed, "feeds", None)
+    if isinstance(children, list):
+        return any(
+            provides_articles(c, source) for c in children if getattr(c, "name", None) == source
+        )
+    return getattr(feed, "name", None) == source and isinstance(feed, ArticleProvider)
+
+
+def _int_attr(feed: object, attr: str) -> dict[str, int]:
+    children = getattr(feed, "feeds", None)
+    if isinstance(children, list):
+        out: dict[str, int] = {}
+        for child in children:
+            out.update(_int_attr(child, attr))
+        return out
+    n = getattr(feed, attr, None)
+    name = getattr(feed, "name", None)
+    return {name: n} if isinstance(n, int) and n > 0 and isinstance(name, str) else {}
+
+
+def per_run_caps(feed: object) -> dict[str, int]:
+    """1 回の実行で記事にする本数の上限をソースごとに（`max_per_run`）。
+
+    **注目度の桁が他と違うソース（GitHub の stars は数千〜数万、Hacker News の points は
+    数百）が、注目度順で枠を独占しないように**する。持たないソースは上限なし。
+    """
+    return _int_attr(feed, "max_per_run")
+
+
+def collect_quotas(feed: object) -> dict[str, int]:
+    """束ねて収集するとき、全体の上限とは別に取る件数（`collect_quota`）。
+
+    注目度の桁が他と違うソースは、全体を注目度順に切るとそのソースだけが残る（または
+    消える）。そのソースは全体の枠に混ぜず、この件数だけ別に取る。
+    """
+    return _int_attr(feed, "collect_quota")
+
+
+def reserved_slots(feed: object) -> dict[str, int]:
+    """1 回の実行で、注目度に関係なく記事にする本数をソースごとに（`reserved_per_run`）。
+
+    注目度を持たない公式ブログが使う（docs/DESIGN.md 4.1d）。持たないソースは入れない。
+    """
+    children = getattr(feed, "feeds", None)
+    if isinstance(children, list):
+        out: dict[str, int] = {}
+        for child in children:
+            out.update(reserved_slots(child))
+        return out
+    n = getattr(feed, "reserved_per_run", None)
+    name = getattr(feed, "name", None)
+    return {name: n} if isinstance(n, int) and n > 0 and isinstance(name, str) else {}
+
+
 def profile_url_patterns(feed: object) -> list[re.Pattern[str]]:
     """そのソースの投稿者プロフィール URL のパターン。持たなければ空。
 

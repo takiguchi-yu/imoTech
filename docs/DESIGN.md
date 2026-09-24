@@ -1,6 +1,6 @@
 # imoTech 実装設計書
 
-Hacker News や Qiita で話題になった技術記事を、日本語の「要旨 + 議論の論調 + imo」として公開する自動化パイプラインの設計。
+Hacker News や Qiita、GitHub、各社の公式ブログで話題になった技術記事を、日本語の「要旨 + 議論の論調 + imo」として公開する自動化パイプラインの設計。
 用語は [CONTEXT.md](../CONTEXT.md) に従う。この文書は実装の設計だけを扱い、用語の定義はしない。
 
 **前提の確定日**: 2026-09-21 / **調査した一次情報の確認日**: 同日
@@ -157,16 +157,27 @@ Python の標準的な書き方へ翻訳している**。
 
 **ソースを足すときに触る範囲**
 
-1. `sources/<name>.py` を書く（`StoryFeed` を満たす。反応も取れるなら `ReactionSource` も）
+1. `sources/<name>.py` を書く（`StoryFeed` を満たす。反応も取れるなら `ReactionSource` も）。
+   **反応が無いソースも `fetch_reactions` で `(Story, [])` を返す**（返さない候補は評価できず、選べない）
 2. `registry.py` の `_FACTORIES` に 1 行足す
 3. **表示名と注目度の単位が要るなら** `site/src/lib/sources.ts` の `SOURCES` にも 1 行足す
-   （無くても壊れないが、生のソース名と "points" が出る）
+   （無くても壊れないが、生のソース名と "points" が出る）。注目度が無いなら `noEngagement`、
+   コメントが無いなら `noComments`
+4. ソースの性質によっては、属性を 1 つ持たせる（M17。**`cli.py` は変えずに済む**）
+
+   | ソースの性質 | 持たせるもの | 例 |
+   |---|---|---|
+   | 注目度が無い（新着を読む価値がある発信元） | `reserved_per_run = N`（1 日 N 本まで枠を確保）と `default_thresholds = Thresholds(0, 0)` | 公式ブログ |
+   | 注目度の桁が他と違う | `max_per_run`（1 日の上限）と `collect_quota`（収集の別枠） | GitHub の stars |
+   | 元記事のページを取りに行ってはいけないが、API で本文が取れる | `ArticleProvider`（`fetch_article(ref)`） | GitHub の README |
+   | URL や本文に投稿者のハンドルが入る | `Story.author` と `profile_url_re` | Qiita・GitHub |
 
 **Notion は触らない。** 列は意味ごとに 1 つで、`Source` の選択肢は最初のページを作ったときに
 Notion が足す（3.1）。
 
 `cli.py` も `store.py` も `render.py` も変えずに済むことは、`tests/test_sources.py` で
-ダミーのソースを登録して実証している。
+ダミーのソースを登録して実証している（M17 で上の 4 の仕組みを足すために `cli.py`・`pipeline.py` を
+一度変えた。以降、同じ性質のソースは属性だけで足せる）。
 
 #### 2 つ目のソース（Qiita）で実際に何が起きたか
 
@@ -592,8 +603,8 @@ Notion の内容を消しても、公開済みの記事は影響を受けない�
 | `Source` | Select | 選択肢は書かない（下記） | パイプライン | 話題を拾ったソース（`hackernews` / `qiita` …）。`sources/registry.py` の名前 |
 | `Source URL` | URL | — | パイプライン | 元記事 |
 | `Discussion URL` | URL | — | パイプライン | 話題を拾ったソースでの議論（HN のスレッド、Qiita の記事） |
-| `Score` | Number | 整数 | パイプライン | 熟成判定時の注目度（HN は points、Qiita は LGTM。単位は `Source` で読む） |
-| `Comments` | Number | 整数 | パイプライン | 熟成判定時のコメント数 |
+| `Score` | Number | 整数 | パイプライン | 熟成判定時の注目度（HN は points、Qiita は LGTM、GitHub は stars。単位は `Source` で読む）。**公式ブログは注目度を持たず、枠で選ばれるので 0**（誰も注目しなかったという意味ではない） |
+| `Comments` | Number | 整数 | パイプライン | 熟成判定時のコメント数。GitHub と公式ブログは持たないので 0 |
 | `Tags` | Multi-select | — | パイプライン | タグ |
 | `Collected At` | Date | 時刻を含む | パイプライン | 候補として拾った時刻 |
 | `Published At` | Date | 時刻を含む | パイプライン | commit した時刻 |
@@ -775,6 +786,45 @@ AI Studio でしか見えない（<https://ai.google.dev/gemini-api/docs/rate-li
 生成に失敗した候補は pending のまま翌日に回る。**1 日の上限による 429 は同じモデルで再試行せず、
 次のモデルへ移り、その実行のあいだは以降の候補でもそのモデルを飛ばす**（その日のうちは戻らない <https://ai.google.dev/gemini-api/docs/api-errors>）。
 429 が 1 日の上限かどうかは、応答の quotaId に "PerDay" が入るかで見ている（この形は未確認）。
+
+### 4.1d GitHub と公式ブログ（M17）
+
+「AI・クラウド・言語・ガジェット/IT ニュースをもっと」を受けて足した（2026-09-24、ユーザーの判断）。
+
+**使えるかの調査（2026-09-24。robots.txt は実際に取得して確認）**
+
+| 候補 | 判定 | 根拠 |
+|---|---|---|
+| Cloudflare Blog（RSS） | ◯ | robots.txt に `Content-Signal: ai-train=yes, search=yes, ai-input=yes`。規約第 8 条の AI 制限は robots.txt で明示的に許されていれば適用されない（<https://www.cloudflare.com/website-terms/>） |
+| Vercel Blog（Atom） | ◯ | robots.txt に `Content-Signal: search=yes, ai-input=yes, ai-train=no` |
+| GitHub（REST API） | △→採用 | Acceptable Use Policies のスクレイピングの制限は API に及ばない（"Scraping does not refer to the collection of information through our API"）。商用は明示の許可ではなく禁止条項が無い水準。**HTML（Trending やリポジトリのページ）は取りに行かない** |
+| The Verge・TechCrunch・Ars Technica | ✕ | robots.txt が ClaudeBot / GPTBot などを `Disallow: /`。規約も scraper・RAG を禁止 |
+| Engadget | ✕ | Yahoo の規約が自動取得と商用利用を禁止 |
+| dev.to・Product Hunt | ✕ | 規約・API が非商用に限る |
+| 9to5Mac・Tom's Hardware | 保留 | 規約の原文が取れなかった（404） |
+
+**選び方**
+
+| 決めたこと | 理由 |
+|---|---|
+| ブログは**新着を各ブログ 1 日 1 本まで枠で確保**（`reserved_per_run`。10 本の内数） | ユーザーの判断。注目度が無いので閾値にもスコア順にも乗せられない（0 だと必ず最後になる）。問い合わせも枠のソースを先頭にする |
+| ブログは反応 0 件のまま「評価済み」にする | 問い合わせで Story を返さない候補は選べない。フィードを 1 回の実行で 1 度だけ取り、そこから返す |
+| Vercel は `/blog/` だけ | Atom の 6 割は changelog（数行の告知）で、記事にならない |
+| GitHub は作成 30 日以内の stars 上位。本文は README を API で | ユーザーの判断（急上昇中の新しいリポジトリ）。本文を API で渡すソースは `ArticleProvider` を実装し、compose は元記事の URL を取りに行かない |
+| **GitHub は 1 日 2 本まで、収集は 10 件まで**（`max_per_run` / `collect_quota`） | stars（数千〜数万）は HN の points（数百）と桁が違い、注目度順に並べると枠を独占する。収集で実際に 53 件中 48 件が GitHub になった。2 本・10 件は自分で決めた値 |
+| GitHub の所有者のハンドルは伏せる。タイトルは `repo: description` | URL（`github.com/<owner>/<repo>`）に入るので `Story.author` で伏せる（Qiita と同じ）。組織でも個人でも区別しない |
+| サイトの注目度の表示は `engagementText` に 1 本化 | ブログは「0 points / 0 コメント」と出すと話題にならなかったように読めるので表示名だけ。GitHub は stars だけ |
+
+**ハンドルを伏せる範囲（GitHub。Qiita と同じ扱い）:** LLM への入力（タイトル・URL・本文・反応）からは伏せる。
+**出典のリンクとして公開する `sourceUrl`（`github.com/<owner>/<repo>`）と、候補ストア・Actions のログの URL には残る。**
+Qiita の `qiita.com/<user>/items/<id>` と同じく、出典を示すのに要るため受け入れる。README 本文の実名や、
+他人のリポジトリの URL は伏せきれない（Qiita の本文と同じ限界）。
+
+HN から来た候補の URL が `github.com` のときは、従来どおり元記事として取りに行く（robots.txt に従う）。
+「HTML を取りに行かない」のは GitHub ソースの候補（本文は README の API）だけ。
+
+**確かめていないこと:** GitHub の stars 1,000 と 1 日 2 本、ブログの 1 日 1 本が妥当か（`stats` を見て動かす）。
+GitHub の README は英語以外（中国語など）もあり、生成の質は未確認。
 
 ### 4.1b 閾値はソースごとに違う
 
@@ -1005,6 +1055,9 @@ GET https://qiita.com/api/v2/items
 当初の要件には「取得元 RSS のフォーマット差異や取得失敗時のフォールバック処理」が含まれていたが、**設計の結果 RSS を使わない**ことになった（情報源が Hacker News の API 単独）。RSS 特有の差異（RSS 2.0 / Atom / 日付フォーマットの揺れ / CDATA）への対処は不要になる。
 
 将来 RSS ソースを足す場合に備え、`sources/` の `StoryFeed` Protocol は「フィードの形式を知らない」インターフェース（`fetch_stories() -> list[Story]`）にしてある。RSS 実装を足すときは `sources/rss.py` に閉じ、`feedparser` で形式差を吸収する。
+
+**M17 で `sources/feed.py` として実装した（4.1d）。** feedparser は足さず、標準ライブラリの ElementTree で
+RSS 2.0 と Atom を読む。相手は発信元が固定の公式ブログ 2 つで、形の揺れが無いため（`feed.py` の `_parse`）。
 
 ---
 

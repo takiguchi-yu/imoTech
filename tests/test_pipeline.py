@@ -307,3 +307,98 @@ def test_片方が足りなければもう一方に回す():
     only_off = [_pc(f"off{i}", i, False)[0] for i in range(10)]
     got = probe_targets(only_off, limit=8, topics_of=lambda c: False)
     assert len(got) == 8
+
+
+# --- 公式ブログの枠（docs/DESIGN.md 4.1d） ---------------------------------
+
+
+def _src(h, source, score, hours_ago=30):
+    c = _c(hours_ago, score=score, comments=0, h=h)
+    c.ref = SourceRef(source, h)
+    return c
+
+
+def test_枠のあるソースは注目度に関係なく先に選ぶ():
+    cands = [_src(f"hn{i}", "hackernews", 900) for i in range(5)] + [
+        _src("blog_old", "cloudflare-blog", 0, 40),
+        _src("blog_new", "cloudflare-blog", 0, 30),
+    ]
+    s = select(
+        cands,
+        now=NOW,
+        thresholds={"cloudflare-blog": Thresholds(0, 0)},
+        default_thresholds=Thresholds(100, 0),
+        max_drafts=3,
+        max_age_hours=96,
+        reserved={"cloudflare-blog": 1},
+    )
+    got = [c.url_hash for c in s.selected]
+    assert got[0] == "blog_new"  # 新しい順に 1 本だけ
+    assert "blog_old" not in got
+    assert len(got) == 3  # 枠は max_drafts の内数
+
+
+def test_枠のあるソースの候補は問い合わせの先頭に回す():
+    cands = [_src(f"hn{i}", "hackernews", 900) for i in range(10)] + [
+        _src("blog", "cloudflare-blog", 0)
+    ]
+    got = probe_targets(
+        cands, limit=4, topics_of=lambda c: False, reserved_sources=frozenset({"cloudflare-blog"})
+    )
+    assert got[0].url_hash == "blog" and len(got) == 4
+
+
+def test_上限のあるソースは上限を超えて選ばない():
+    # GitHub の stars は HN の points と桁が違い、注目度順だと枠を独占する
+    cands = [_src(f"gh{i}", "github", 20000) for i in range(5)] + [
+        _src(f"hn{i}", "hackernews", 300) for i in range(5)
+    ]
+    s = select(
+        cands,
+        now=NOW,
+        thresholds={},
+        default_thresholds=Thresholds(100, 0),
+        max_drafts=5,
+        max_age_hours=96,
+        caps={"github": 2},
+    )
+    got = [c.ref.source for c in s.selected]
+    assert got.count("github") == 2 and got.count("hackernews") == 3
+
+
+def test_上限のあるソースは上限の3倍までしか問い合わせない():
+    cands = [_src(f"gh{i}", "github", 20000) for i in range(20)] + [
+        _src(f"hn{i}", "hackernews", 300) for i in range(20)
+    ]
+    got = probe_targets(cands, limit=10, topics_of=lambda c: False, caps={"github": 2})
+    assert [c.ref.source for c in got].count("github") == 6
+
+
+def test_枠のソースは穴埋めでも2本目を取らない():
+    # 話題に当たるブログ記事（スコア 0）は、話題に当たらない HN より前に並ぶ
+    cands = [_src(f"blog{i}", "cloudflare-blog", 0, 30 + i) for i in range(4)] + [
+        _src(f"hn{i}", "hackernews", 500) for i in range(3)
+    ]
+    topical = {c.url_hash for c in cands if c.url_hash.startswith("blog")}
+    s = select(
+        cands,
+        now=NOW,
+        thresholds={"cloudflare-blog": Thresholds(0, 0)},
+        default_thresholds=Thresholds(100, 0),
+        max_drafts=10,
+        max_age_hours=96,
+        topics_of=lambda c: ["クラウド"] if c.url_hash in topical else [],
+        reserved={"cloudflare-blog": 1},
+    )
+    assert [c.ref.source for c in s.selected].count("cloudflare-blog") == 1
+
+
+def test_枠のソースは問い合わせも数件まで():
+    cands = [_src(f"blog{i}", "cloudflare-blog", 0, 30 + i) for i in range(10)] + [
+        _src(f"hn{i}", "hackernews", 500) for i in range(10)
+    ]
+    got = probe_targets(
+        cands, limit=10, topics_of=lambda c: False, reserved_sources=frozenset({"cloudflare-blog"})
+    )
+    assert [c.ref.source for c in got].count("cloudflare-blog") == 3
+    assert got[0].url_hash == "blog0"  # 新しい順

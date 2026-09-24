@@ -8,7 +8,7 @@
  * 元記事の画像は使わない — 他人の画像の無断転載になる（はてブの OGP プレビューを
  * 「転載になる」として避けた判断と同じ理由）。
  */
-import { scoreUnit, sourceLabel } from "./sources.ts";
+import { engagementText } from "./sources.ts";
 
 /** 推奨サイズ。1.91:1 に近いほど、フィードで切り抜かれずに全体が出る
  * （https://developers.facebook.com/docs/sharing/webmasters/images ）。 */
@@ -62,7 +62,7 @@ export function ogImagePath(slug: string): string {
 
 /** 注目度の 1 行。記事ページの見出し下（`[...slug].astro`）と同じ書き方に揃える。 */
 export function metaLine(card: Pick<OgCard, "source" | "score" | "comments">): string {
-  return `${sourceLabel(card.source)} ・ ${card.score} ${scoreUnit(card.source)} / ${card.comments} コメント`;
+  return engagementText(card.source, card.score, card.comments, " ・ ");
 }
 
 /** タイトルの字の大きさを選ぶ。**収まる範囲でいちばん大きい字**にする。

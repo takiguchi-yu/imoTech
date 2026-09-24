@@ -9,6 +9,10 @@ type SourceMeta = {
   label: string;
   /** 注目度の呼び名。Hacker News は points、Qiita は LGTM、Zenn はいいね */
   scoreUnit: string;
+  /** 注目度を持たないソース（公式ブログ）。表示名だけを出す */
+  noEngagement?: boolean;
+  /** コメント数を持たないソース（GitHub）。注目度だけを出す */
+  noComments?: boolean;
 };
 
 const SOURCES: Record<string, SourceMeta> = {
@@ -16,6 +20,9 @@ const SOURCES: Record<string, SourceMeta> = {
   qiita: { label: "Qiita", scoreUnit: "LGTM" },
   zenn: { label: "Zenn", scoreUnit: "いいね" },
   devto: { label: "dev.to", scoreUnit: "reactions" },
+  github: { label: "GitHub", scoreUnit: "stars", noComments: true },
+  "cloudflare-blog": { label: "Cloudflare Blog", scoreUnit: "", noEngagement: true },
+  "vercel-blog": { label: "Vercel Blog", scoreUnit: "", noEngagement: true },
 };
 
 export function sourceLabel(source: string): string {
@@ -24,6 +31,24 @@ export function sourceLabel(source: string): string {
 
 export function scoreUnit(source: string): string {
   return SOURCES[source]?.scoreUnit ?? "points";
+}
+
+/** 「ソース名 注目度 / コメント数」の 1 行。記事ページ・一覧・RSS・アイキャッチで同じ書き方にする。
+ *
+ * 注目度を持たないソース（公式ブログ）は「0 points / 0 コメント」と出すと、話題にならなかった
+ * ように読めるので、表示名だけにする。GitHub はコメントを持たないので stars だけ。 */
+export function engagementText(
+  source: string,
+  score: number,
+  comments: number,
+  /** 表示名と注目度のあいだ。アイキャッチは「 ・ 」で区切る */
+  separator = " ",
+): string {
+  const meta = SOURCES[source];
+  const label = sourceLabel(source);
+  if (meta?.noEngagement) return label;
+  if (meta?.noComments) return `${label}${separator}${score} ${scoreUnit(source)}`;
+  return `${label}${separator}${score} ${scoreUnit(source)} / ${comments} コメント`;
 }
 
 /** 議論の場所が元記事とは別にあるか。

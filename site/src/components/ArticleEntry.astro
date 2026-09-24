@@ -9,7 +9,7 @@
  */
 import { type Article, formatDate } from "../lib/articles";
 import { OG_HEIGHT, OG_WIDTH, ogImagePath } from "../lib/og";
-import { scoreUnit, sourceLabel } from "../lib/sources";
+import { engagementText } from "../lib/sources";
 
 interface Props {
   article: Article;
@@ -45,7 +45,6 @@ const href = `/articles/${article.id}/`;
   </a>
   <h2 class="entry-title"><a href={href}>{d.title}</a></h2>
   <p class="meta entry-meta">
-    {formatDate(d.publishedAt)} ・ {sourceLabel(d.source)} {d.score}{" "}
-    {scoreUnit(d.source)} / {d.comments} コメント
+    {formatDate(d.publishedAt)} ・ {engagementText(d.source, d.score, d.comments)}
   </p>
 </li>

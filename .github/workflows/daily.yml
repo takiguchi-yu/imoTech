@@ -32,9 +32,10 @@ jobs:
     # 必要があり、片方だけに入れると「収集は HN・選別は Qiita」のような噛み合わない
     # 状態になって、エラーも出ないまま毎日 0 本になる
     env:
-      # 使えるのは hackernews と qiita（src/imotech/sources/registry.py）。
+      # 使えるのは hackernews / qiita / github / cloudflare-blog / vercel-blog
+      # （src/imotech/sources/registry.py）。
       # 増減させるときはここ 1 箇所でよい（collect と compose の両方に効く）
-      IMOTECH_SOURCES: hackernews,qiita
+      IMOTECH_SOURCES: hackernews,qiita,github,cloudflare-blog,vercel-blog
       # 1 回の実行でソースに問い合わせる候補の上限。
       # **qiita を含むので 40 に下げてある** — Qiita は非認証で 60 req/h/IP、
       # collect の検索（最大 3 ページ）と compose の問い合わせが同じ枠を食う。
@@ -58,6 +59,10 @@ jobs:
 
       - name: 候補を収集する
         run: uv run imotech collect
+        env:
+          # GitHub の API を認証つきで叩く（認証なしは 60 req/h）。このジョブの token は
+          # contents: write を持つので、使うステップだけに渡す
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # 終了コードの意味は src/imotech/cli.py の cmd_compose 末尾を参照。
       # 部分的な失敗は 0 で返り、次回の実行が pending を拾う。
@@ -65,6 +70,9 @@ jobs:
       - name: 下書きを生成する
         run: uv run imotech compose
         env:
+          # GitHub の API を認証つきで叩く（認証なしは 60 req/h）。このジョブの token は
+          # contents: write を持つので、使うステップだけに渡す
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}

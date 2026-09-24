@@ -9,7 +9,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from ..models import Reaction, SourceRef, Story
-from . import StoryFeed, supports_reactions
+from . import (
+    StoryFeed,
+    collect_quotas,
+    provided_article,
+    reserved_slots,
+    supports_reactions,
+)
 
 
 class MultiFeed:
@@ -36,13 +42,17 @@ class MultiFeed:
     ) -> list[Story]:
         out: list[Story] = []
         failed: list[str] = []
+        quotas = collect_quotas(self)
         for feed in self._feeds:
             # 1 つのソースが落ちても他は使う。収集はベストエフォートでよい
             # （次回の実行が拾い直す — docs/DESIGN.md 5.5）
             try:
                 out.extend(
                     feed.fetch_stories(
-                        window_hours=window_hours, min_points=min_points, limit=limit
+                        window_hours=window_hours,
+                        min_points=min_points,
+                        # 別枠のソースには別枠の件数を頼む（全体の上限で頼むと足りない）
+                        limit=quotas.get(feed.name, limit),
                     )
                 )
             except Exception as e:  # noqa: BLE001 — ソース側の例外の型を呼び出し側が知らない
@@ -52,8 +62,24 @@ class MultiFeed:
         # 記事が出なくなっても無人実行では誰も気づけない（docs/DESIGN.md 5.5）
         if len(failed) == len(self._feeds):
             raise RuntimeError(f"すべてのソースからの収集に失敗しました: {', '.join(failed)}")
-        out.sort(key=lambda s: (-s.engagement.score, -s.engagement.comments))
-        return out[:limit]
+        # **枠を持つソース（公式ブログ）の新着は上限で切らない。** 注目度が 0 なので、
+        # 注目度順に並べて切ると必ず落ちる（docs/DESIGN.md 4.1d）
+        reserved = set(reserved_slots(self))
+        # **注目度の桁が違うソース（GitHub の stars）は全体の枠に混ぜない。** 混ぜると
+        # stars が points を必ず上回り、Hacker News と Qiita の新着が消える（2026-09-24
+        # の実測で 53 件中 48 件が GitHub になった）。そのソースは決めた件数だけ別に取る
+
+        def by_score(xs: list[Story]) -> list[Story]:
+            return sorted(xs, key=lambda s: (-s.engagement.score, -s.engagement.comments))
+
+        kept = [s for s in out if s.ref.source in reserved]
+        separate = [
+            s
+            for source, n in quotas.items()
+            for s in by_score([x for x in out if x.ref.source == source])[:n]
+        ]
+        rest = [s for s in out if s.ref.source not in reserved and s.ref.source not in quotas]
+        return by_score(rest)[:limit] + separate + kept
 
     def fetch_reactions(self, ref: SourceRef) -> tuple[Story | None, list[Reaction]]:
         """候補が拾われたソースへ振り分ける。
@@ -65,6 +91,10 @@ class MultiFeed:
             if feed.name == ref.source and supports_reactions(feed):
                 return feed.fetch_reactions(ref)
         return None, []
+
+    def fetch_article(self, ref: SourceRef) -> str | None:
+        """本文を自分で渡すソース（GitHub）の候補なら、その本文。それ以外は None。"""
+        return provided_article(self, ref)
 
     def close(self) -> None:
         for feed in self._feeds:
