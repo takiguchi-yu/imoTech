@@ -1,5 +1,5 @@
 ---
-title: "Linear、CI刷新でテスト実行時間を半減　コード急増の価値に疑問の声"
+title: "Linear、AI で急増した PR に合わせ CI を刷新　テスト 1 件の実行時間をほぼ半減"
 publishedAt: 2026-09-27T08:39:38+09:00
 sourceUrl: "https://linear.app/now/ci-bottleneck-reworked"
 sourceTitle: "AI coding has made CI a bottleneck, so we reworked ours to keep up"

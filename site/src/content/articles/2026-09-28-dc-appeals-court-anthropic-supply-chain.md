@@ -1,5 +1,5 @@
 ---
-title: "米連邦控訴裁、Anthropicの排除指定を支持　利用規約巡り賛否"
+title: "米連邦控訴裁、国防総省による Anthropic のサプライチェーンリスク指定を支持"
 publishedAt: 2026-09-28T08:51:27+09:00
 sourceUrl: "https://www.cnbc.com/2026/09/25/pentagon-anthropic-ai-risk-appeals-court.html"
 sourceTitle: "U.S. appeals court upholds designation of Anthropic as supply chain risk"

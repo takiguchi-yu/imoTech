@@ -865,6 +865,11 @@ def test_反応の論調を添えたタイトルを知らせる():
         ("Acme、ベクトル DB「Quill」を公開　ベンチマークに疑問の声", "の声"),
         ("Acme、ベクトル DB「Quill」を公開　開発者に波紋", "波紋"),
         ("Acme、ベクトル DB「Quill」を公開　今後に様々な見方", "様々な見方"),
+        ("Acme、ベクトル DB「Quill」を公開　計測方法を巡り物議", "物議"),
+        ("Acme、ベクトル DB「Quill」を公開　表現力や安全性に注目", "に注目"),
+        ("Acme、ベクトル DB「Quill」を公開　計測方法に疑問", "に疑問"),
+        ("Acme、ベクトル DB「Quill」を公開　起動時間に懸念も", "懸念"),
+        ("Acme、ベクトル DB「Quill」を公開　利用者の不満相次ぐ", "不満"),
     ]:
         got = [p for p in title_problems(title) if "使わない語" in p]
         assert len(got) == 1 and word in got[0], title

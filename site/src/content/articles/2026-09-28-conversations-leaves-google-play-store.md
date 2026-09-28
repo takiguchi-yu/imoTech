@@ -1,5 +1,5 @@
 ---
-title: "Conversations開発者、Google Playでの有料配信を終了　審査対応に不満の声"
+title: "Conversations 開発者、Google Play での有料配信をやめ完全無料化"
 publishedAt: 2026-09-28T08:50:52+09:00
 sourceUrl: "https://gultsch.de/posts/breaking-up-with-google-play/"
 sourceTitle: "Breaking Up with Google Play: Why Conversations Is Now Free"

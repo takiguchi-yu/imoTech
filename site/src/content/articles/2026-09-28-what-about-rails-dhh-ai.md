@@ -1,5 +1,5 @@
 ---
-title: "DHH氏、Railsからの脱却とAI移行を宣言　開発者から戸惑いの声"
+title: "DHH 氏、手書きのコーディングをやめ LLM へ移行と表明　次期 Hey は Rails を離脱"
 publishedAt: 2026-09-28T08:53:10+09:00
 sourceUrl: "https://jardo.dev/what-about-rails"
 sourceTitle: "What About Rails?"

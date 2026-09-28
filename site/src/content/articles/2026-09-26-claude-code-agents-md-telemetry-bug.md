@@ -1,5 +1,5 @@
 ---
-title: "Anthropic、Claude Codeの設定不読を修正　遠隔フラグ設計に賛否"
+title: "Claude Code 2.1.277 に、テレメトリ無効時に AGENTS.md を読まない不具合"
 publishedAt: 2026-09-26T09:01:33+09:00
 sourceUrl: "https://blog.szypowi.cz/p/claude-code-reads-agents.md-only-when-telemetry-is-on/"
 sourceTitle: "Claude Code reads AGENTS.md only when telemetry is on [fixed]"

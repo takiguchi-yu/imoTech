@@ -1,5 +1,5 @@
 ---
-title: "オランダ政府、NixOS採用の脱MS職場環境を構築　互換性に懸念も"
+title: "オランダ政府、NixOS を基盤に Microsoft 代替の職場環境「DAWO」を構想"
 publishedAt: 2026-09-28T08:50:12+09:00
 sourceUrl: "https://www.dawo.community/en/"
 sourceTitle: "Dutch governments builds alternative for Microsoft based on NixOS"

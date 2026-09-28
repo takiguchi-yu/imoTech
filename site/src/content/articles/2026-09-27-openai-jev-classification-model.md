@@ -1,5 +1,5 @@
 ---
-title: "OpenAI、新分類モデル「Jev」に追随か　技術の新規性に疑問の声"
+title: "筆者、OpenAI は分類モデル「Jev」に追随しやすい立場にあると分析"
 publishedAt: 2026-09-27T08:39:17+09:00
 sourceUrl: "https://arcturus-labs.com/blog/2026/09/21/will-openai-eat-jevs-lunch/"
 sourceTitle: "OpenAI is well positioned to fast-follow Jev"

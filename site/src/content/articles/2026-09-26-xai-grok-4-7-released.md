@@ -1,5 +1,5 @@
 ---
-title: "xAI、新モデル「Grok 4.7」を公開　実務性能や費用対効果に賛否"
+title: "xAI、「Grok 4.7」を公開　価格は Grok 4.6 と同じで 2 倍速版も用意"
 publishedAt: 2026-09-26T09:00:57+09:00
 sourceUrl: "https://x.ai/news/grok-4-7"
 sourceTitle: "Grok 4.7"

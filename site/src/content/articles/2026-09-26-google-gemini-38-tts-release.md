@@ -1,5 +1,5 @@
 ---
-title: "Google、音声生成「Gemini 3.8 TTS」公開　表現力や安全性に注目"
+title: "Google、音声生成「Gemini 3.8 Flash TTS」公開　100 以上の言語に対応"
 publishedAt: 2026-09-26T09:05:06+09:00
 sourceUrl: "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-8-text-to-speech/"
 sourceTitle: "Gemini 3.8 text-to-speech"

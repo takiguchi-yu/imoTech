@@ -1,5 +1,5 @@
 ---
-title: "Apple、iOSの設定に消せない自社広告を表示　ユーザーの不満相次ぐ"
+title: "Apple、iOS の設定アプリに消せない自社サービスの宣伝バナーを表示"
 publishedAt: 2026-09-26T08:57:56+09:00
 sourceUrl: "https://www.techradar.com/phones/iphone/i-wish-apple-would-just-stop-that-crap-apple-has-added-persistent-ads-to-ios-and-its-driving-users-crazy"
 sourceTitle: "Apple has added persistent 'ads' to iOS, and it's driving users crazy"

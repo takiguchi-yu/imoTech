@@ -1,5 +1,5 @@
 ---
-title: "Unreal Labs、AIエージェントの非同期実行基盤を公開　商標侵害に懸念の声"
+title: "Unreal Labs、ツールを非同期で実行するエージェント基盤を公開　コスト 20〜40% 減"
 publishedAt: 2026-09-27T08:44:06+09:00
 sourceUrl: "https://unreallabs.ai/blog/unreal-agent/"
 sourceTitle: "Unreal Agent"

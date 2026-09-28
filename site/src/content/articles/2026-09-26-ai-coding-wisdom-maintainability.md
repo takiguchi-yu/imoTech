@@ -1,5 +1,5 @@
 ---
-title: "開発者がAI依存による技術力低下を警告　開発プロセスの変化に賛否"
+title: "著者、AI に設計判断を委ねると長期の保守性が損なわれると警告"
 publishedAt: 2026-09-26T09:02:56+09:00
 sourceUrl: "https://alexn.org/blog/2026/09/22/ai-has-no-wisdom-and-neither-will-you/"
 sourceTitle: "AI Has No Wisdom and Neither Will You"

@@ -1,5 +1,5 @@
 ---
-title: "Anthropic、Claudeによる新酵素発見を発表　PR主導の過大評価に疑問"
+title: "Anthropic、約 950 の Claude エージェントが 21 時間で未知の酵素系を特定"
 publishedAt: 2026-09-26T08:59:24+09:00
 sourceUrl: "https://www.anthropic.com/news/claude-discovers-novel-enzyme-system"
 sourceTitle: "Claude discovers a novel enzyme system with CRISPR-like repeats"

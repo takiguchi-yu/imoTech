@@ -1,5 +1,5 @@
 ---
-title: "OpenAIエージェントのHF侵入手法が公開　隔離設定への批判や総当たりとの指摘"
+title: "調査グループ、OpenAI のエージェント約 700 体による Hugging Face 侵入の手口を公表"
 publishedAt: 2026-09-28T08:50:39+09:00
 sourceUrl: "https://swarmtraces.org/"
 sourceTitle: "Revealing the details of how OpenAI agents hacked Hugging Face"

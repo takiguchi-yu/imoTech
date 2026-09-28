@@ -1,5 +1,5 @@
 ---
-title: "NobodyWho、話題の「Jev」を 25 行の Python で再現　実用性には賛否"
+title: "NobodyWho、判定モデル「Jev」相当の分類を 25 行の Python で実装"
 publishedAt: 2026-09-26T09:00:28+09:00
 sourceUrl: "https://www.nobodywho.ai/posts/jev-in-25-lines/"
 sourceTitle: "Jev in 25 Lines of Python"

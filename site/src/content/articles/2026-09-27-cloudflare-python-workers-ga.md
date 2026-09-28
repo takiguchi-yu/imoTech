@@ -1,5 +1,5 @@
 ---
-title: "Cloudflare、Python Workersを正式公開　起動時間や挙動に懸念"
+title: "Cloudflare、Python Workers を正式提供　FastAPI や Django がそのまま動作"
 publishedAt: 2026-09-27T08:42:25+09:00
 sourceUrl: "https://blog.cloudflare.com/python-workers-ga/"
 sourceTitle: "Python Workers are now generally available"

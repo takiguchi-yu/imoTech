@@ -1,5 +1,5 @@
 ---
-title: "DrivingBench、GPT-6の実車運転を検証　クラウド制御の遅延に懸念"
+title: "DrivingBench、LLM に実車を運転させる検証で GPT-6 Astra が完走"
 publishedAt: 2026-09-27T08:40:08+09:00
 sourceUrl: "https://drivingbench.com/"
 sourceTitle: "GPT-6 Astra has gained the ability to drive a car"

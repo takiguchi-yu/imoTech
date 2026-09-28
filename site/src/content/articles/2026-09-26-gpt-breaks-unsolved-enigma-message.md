@@ -1,5 +1,5 @@
 ---
-title: "OpenAIのAI、2005年から未解読のエニグマ暗号を解読　自律性に賛否"
+title: "OpenAI の GPT–6 Astra、2005 年から未解読のエニグマ暗号文を 2 日で解読"
 publishedAt: 2026-09-26T09:00:08+09:00
 sourceUrl: "https://www.cryptocellar.org/bgac/the-mvueh-break.html"
 sourceTitle: "OpenAI GPT–6 Astra breaks Enigma message that has resisted solution since 2005"

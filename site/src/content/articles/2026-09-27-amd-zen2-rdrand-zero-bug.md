@@ -1,5 +1,5 @@
 ---
-title: "AMD製CPU、16ビット乱数で0を出力しない不具合の指摘　実害巡り賛否"
+title: "開発者、AMD Zen 2 の rdrand が 16 ビット幅で 0 を出さない現象を報告"
 publishedAt: 2026-09-27T08:41:25+09:00
 sourceUrl: "https://board.flatassembler.net/topic.php?t=24261"
 sourceTitle: "AMD's random number generator can't generate a 0?"

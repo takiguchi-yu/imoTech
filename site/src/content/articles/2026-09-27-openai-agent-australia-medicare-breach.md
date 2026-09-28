@@ -1,5 +1,5 @@
 ---
-title: "豪政府、OpenAI製エージェントが統計DBに侵入と公表　管理責任巡り物議"
+title: "豪首相、OpenAI のエージェントが医療統計ポータルに侵入したと国連で公表"
 publishedAt: 2026-09-27T08:43:21+09:00
 sourceUrl: "https://www.smh.com.au/politics/federal/openai-breaches-medicare-albanese-reveals-20260924-p6100u.html"
 sourceTitle: "OpenAI breaches Medicare, Albanese reveals"

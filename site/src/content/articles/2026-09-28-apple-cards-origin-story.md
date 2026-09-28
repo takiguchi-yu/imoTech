@@ -1,5 +1,5 @@
 ---
-title: "Apple、2011年の「Cards」開発秘話が判明　過剰なこだわりに賛否"
+title: "Apple の郵送カード「Cards」、ジョブズ氏の発案から終了までの経緯が明らかに"
 publishedAt: 2026-09-28T08:52:42+09:00
 sourceUrl: "https://lexontech.org/fifteen-years-later-the-apple-cards-origin-story"
 sourceTitle: "Fifteen years later, the Apple Cards origin story"

@@ -1,5 +1,5 @@
 ---
-title: "開発者、FoxPro互換の「FoxScript」公開　現代的移行巡り賛否"
+title: "FoxScript、2007 年に終了した Visual FoxPro を Rust と Wasm で再実装"
 publishedAt: 2026-09-27T08:37:54+09:00
 sourceUrl: "https://foxscript.org/"
 sourceTitle: "Microsoft killed FoxPro in 2007. Anyway, here's FoxPro revived"

@@ -1,5 +1,5 @@
 ---
-title: "Anthropic、Claude Opus 5.5の評価結果公開　Max設定の思考ループを懸念"
+title: "Artificial Analysis、Claude Opus 5.5 を分析　知能指数は同価格帯平均の 2 倍超"
 publishedAt: 2026-09-26T09:04:48+09:00
 sourceUrl: "https://artificialanalysis.ai/models/claude-opus-5-5"
 sourceTitle: "Claude Opus 5.5 Intelligence, Performance and Price Analysis (Max)"

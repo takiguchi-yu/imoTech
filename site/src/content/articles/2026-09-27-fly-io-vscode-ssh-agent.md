@@ -1,5 +1,5 @@
 ---
-title: "Fly.io、VS CodeのSSH拡張に警鐘　設計思想に賛否"
+title: "Fly.io、VS Code の Remote-SSH が送り込むエージェントの動作を解説"
 publishedAt: 2026-09-27T08:40:46+09:00
 sourceUrl: "https://fly.io/blog/vscode-ssh-wtf/"
 sourceTitle: "VSCode's SSH Agent Is Bananas (2025)"

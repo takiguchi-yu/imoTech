@@ -1,5 +1,5 @@
 ---
-title: "米テックメディア、M5 Ultra搭載Macを検証　高価格や費用対効果に賛否"
+title: "筆者、M5 Ultra の Mac Studio でローカル AI を 99 日間連続稼働"
 publishedAt: 2026-09-27T08:43:01+09:00
 sourceUrl: "https://www.macstories.net/stories/m5-ultra-mac-studio-review-the-dream-mac-for-local-ai-agents/"
 sourceTitle: "M5 Ultra Mac Studio Review"

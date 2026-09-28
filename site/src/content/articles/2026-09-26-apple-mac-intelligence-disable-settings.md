@@ -1,5 +1,5 @@
 ---
-title: "Apple、MacのAI機能無効化手順を公開　設定の置き場や容量占有に疑問の声"
+title: "Apple、Mac の Apple Intelligence を無効化・制限する公式手順を公開"
 publishedAt: 2026-09-26T09:03:57+09:00
 sourceUrl: "https://support.apple.com/guide/mac-help/turn-restrict-access-apple-intelligence-mchlb2e44f94/mac"
 sourceTitle: "Turn off and restrict access to Apple Intelligence features on Mac"
