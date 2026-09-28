@@ -1,5 +1,5 @@
 ---
-title: "Google が公開したオープンソースのエージェント用オーケストレーター「AX」と、その実用性を巡る議論"
+title: "Google、エージェント実行を管理するオーケストレーター「AX」をオープンソースで公開"
 publishedAt: 2026-09-22T00:06:09+09:00
 sourceUrl: "https://agentexecutor.io"
 sourceTitle: "AX – Google’s Open Agentic Orchestrator"

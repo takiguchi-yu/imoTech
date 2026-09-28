@@ -1,5 +1,5 @@
 ---
-title: "Anthropic、新型モデル「Claude Opus 5.5」公開　コスト削減と文体の改善に評価"
+title: "Anthropic、「Claude Opus 5.5」発表　Opus 5 比でコスト 40% 減・速度 30% 向上"
 publishedAt: 2026-09-24T08:43:51+09:00
 sourceUrl: "https://www.anthropic.com/claude-opus-5-5"
 sourceTitle: "Claude Opus 5.5"

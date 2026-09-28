@@ -1,5 +1,5 @@
 ---
-title: "プライベートエクイティによる医療機関買収を禁止する法案、HNでの賛否"
+title: "米議会に PE ファンドの診療所所有を禁じる法案　医療への PE 投資は 1,040 億ドルに"
 publishedAt: 2026-09-22T12:27:15+09:00
 sourceUrl: "https://truthout.org/articles/warren-introduces-bill-to-ban-private-equity-from-owning-medical-practices/"
 sourceTitle: "Bill to Ban Private Equity from Owning Medical Practices"

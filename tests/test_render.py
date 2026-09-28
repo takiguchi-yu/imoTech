@@ -835,9 +835,7 @@ def test_上限内の事実型タイトルは問題なし():
     from imotech.render import title_problems
 
     assert (
-        title_problems(
-            "Acme、ベクトル DB「Quill」をオープンソースで公開　ベンチマークの条件に疑問の声"
-        )
+        title_problems("Acme、ベクトル DB「Quill」をオープンソースで公開　検索は従来比 4 倍速く")
         == []
     )
 
@@ -856,6 +854,20 @@ def test_定型句と記号を知らせる():
     assert len(got) == 1
     for w in ("【", "記事が登場", "HN では", "議論", "？"):
         assert w in got[0]
+
+
+def test_反応の論調を添えたタイトルを知らせる():
+    from imotech.render import title_problems
+
+    for title, word in [
+        ("Acme、ベクトル DB「Quill」を公開　実用性に賛否", "賛否"),
+        ("Acme、ベクトル DB「Quill」を公開　計測方法の是非", "是非"),
+        ("Acme、ベクトル DB「Quill」を公開　ベンチマークに疑問の声", "の声"),
+        ("Acme、ベクトル DB「Quill」を公開　開発者に波紋", "波紋"),
+        ("Acme、ベクトル DB「Quill」を公開　今後に様々な見方", "様々な見方"),
+    ]:
+        got = [p for p in title_problems(title) if "使わない語" in p]
+        assert len(got) == 1 and word in got[0], title
 
 
 def test_短すぎるタイトルを知らせる():

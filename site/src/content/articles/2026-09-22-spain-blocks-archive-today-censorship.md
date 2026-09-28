@@ -1,5 +1,5 @@
 ---
-title: "スペインによるArchive.today遮断命令を受け、HNでは政府の過剰なネット検閲とサービスの信頼性が議論に"
+title: "スペイン文化省、Archive.today と主要ミラーへのアクセス遮断を命令"
 publishedAt: 2026-09-22T12:27:02+09:00
 sourceUrl: "https://reclaimthenet.org/spain-blocks-archive-today-and-mirrors"
 sourceTitle: "Spain orders blocks on Archive.today and its mirrors"

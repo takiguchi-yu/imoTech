@@ -1,5 +1,5 @@
 ---
-title: "スノーデン文書の公開が途絶えた理由とは、国家の圧力やジャーナリズムの萎縮を巡りHNで議論"
+title: "スノーデン文書、2019 年を最後に報道機関からの公開が途絶える"
 publishedAt: 2026-09-22T12:23:38+09:00
 sourceUrl: "https://libroot.org/posts/what-happened-to-the-snowden-archive"
 sourceTitle: "What happened to the Snowden archive"

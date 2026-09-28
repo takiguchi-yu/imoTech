@@ -1,5 +1,5 @@
 ---
-title: "サムスンがHBM4生産を倍増へ、消費者向けDRAMの価格高騰懸念と市場の自律調整を巡り議論"
+title: "サムスン電子、HBM4・HBM4E の生産量を来年 2 倍以上に拡大へ"
 publishedAt: 2026-09-22T12:25:37+09:00
 sourceUrl: "https://en.sedaily.com/finance/2026/09/20/samsung-to-double-hbm4-output-next-year-sources-say"
 sourceTitle: "Samsung is expected to more than double output of its HBM4 and HBM4E DRAM"

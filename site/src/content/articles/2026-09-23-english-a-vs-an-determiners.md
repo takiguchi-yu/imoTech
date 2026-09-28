@@ -1,5 +1,5 @@
 ---
-title: "英語の「a/an」判定の例外分析が話題、議論は冠詞の本質と方言差へ"
+title: "英語の a/an 判定、CMUdict の 3 万 2,455 語を調べると例外は 129 語"
 publishedAt: 2026-09-23T08:37:18+09:00
 sourceUrl: "https://www.redblobgames.com/blog/2026-09-16-english-a-vs-an/"
 sourceTitle: "English: A vs. An"

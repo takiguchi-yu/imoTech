@@ -1,5 +1,5 @@
 ---
-title: "HF依存脱却目指すTorrent配布基盤が登場、持続性と認証方式に議論"
+title: "Pirate Face、Hugging Face のモデルを Torrent で分散保持する基盤を公開"
 publishedAt: 2026-09-22T12:23:51+09:00
 sourceUrl: "https://pirateface.co/"
 sourceTitle: "Pirate Face Rescues LLM Models from Deletion"

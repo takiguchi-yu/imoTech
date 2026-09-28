@@ -1,5 +1,5 @@
 ---
-title: "LLMに名作RTS『スタークラフト』を戦わせる評価が登場、実時間での推論速度と戦略性の限界が議論に"
+title: "LLM に StarCraft を対戦させる「Brood War Bench」公開　全モデルが初心者レベル"
 publishedAt: 2026-09-23T08:37:39+09:00
 sourceUrl: "https://bw.swerdlow.dev/report"
 sourceTitle: "Brood War Bench"

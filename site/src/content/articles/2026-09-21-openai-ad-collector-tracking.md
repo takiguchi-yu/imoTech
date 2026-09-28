@@ -1,5 +1,5 @@
 ---
-title: "OpenAI のアドトラッキング機構と、AI チャットサービスにおけるプライバシーの是非"
+title: "OpenAI、広告用クッキーで外部サイトでの行動を ChatGPT アカウントに紐付け"
 publishedAt: 2026-09-22T00:03:51+09:00
 sourceUrl: "https://www.buchodi.com/chatgpt-now-knows-what-you-do-on-other-websites-via-ad-collector/"
 sourceTitle: "ChatGPT now knows what you do on other websites via ad collector"

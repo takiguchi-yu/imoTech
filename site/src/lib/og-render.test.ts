@@ -103,10 +103,9 @@ test("省略されたかの判定は、本当に長いタイトルでは省略�
 });
 
 test("見積もりで外れていた記事は 64px ではなく 56px を選ぶ", async () => {
-  // レビューで見つかった実在の記事。字数（52 字）からは 64px で 3 行と見積もっていた
-  const t = readFileSync("src/content/articles/2026-09-21-google-ax-agent-orchestrator.md", "utf8")
-    .match(/^title: "(.*)"$/m)?.[1];
-  assert.ok(t);
+  // レビューで見つかった実在の記事の旧タイトル（M18 で書き換えたので、記事からは読まない）。
+  // 字数（52 字）からは 64px で 3 行と見積もっていた
+  const t = "Google が公開したオープンソースのエージェント用オーケストレーター「AX」と、その実用性を巡る議論";
   assert.equal(await measureTitleLines(t, 64), 4);
   assert.equal(await chosenSize(t), 56);
 });

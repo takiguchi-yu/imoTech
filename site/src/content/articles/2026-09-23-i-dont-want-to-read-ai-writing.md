@@ -1,5 +1,5 @@
 ---
-title: "AI生成文章を読む苦痛を訴える記事が登場、HNでは情報伝達の本質をめぐり議論"
+title: "筆者、AI が書いた設計書や PR の説明は文脈が欠けて読む負担が大きいと主張"
 publishedAt: 2026-09-23T12:34:31+09:00
 sourceUrl: "https://blog.colinbreck.com/i-dont-want-to-read-what-you-didnt-write/"
 sourceTitle: "I don't want to read what you didn't write"

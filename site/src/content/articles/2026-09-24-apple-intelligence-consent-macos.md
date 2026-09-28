@@ -1,5 +1,5 @@
 ---
-title: "Apple、macOS のアップデートで AI 機能の無効化スイッチを削除　ユーザーの同意を巡る是非に賛否"
+title: "筆者、macOS 27 で個人データ送信の無効化スイッチが消えたと指摘"
 publishedAt: 2026-09-24T08:44:53+09:00
 sourceUrl: "https://dbushell.com/2026/09/22/apple-intelligence/"
 sourceTitle: "I said no and Apple said yes"

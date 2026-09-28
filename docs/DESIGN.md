@@ -334,7 +334,7 @@ URL: {url}
 
 ```json
 {
-  "title": "Rust の非同期ランタイム分裂から1年、HN の争点は「互換性の約束」",
+  "title": "Rust の非同期ランタイム分裂から 1 年、tokio 以外の選択肢が実用段階に",
   "slug_hint": "rust-async-runtime-split-one-year",
   "digest": [
     "2025年に分裂した Rust の非同期ランタイム勢力図が、1年でどう変わったかを追った記事。",
@@ -365,7 +365,7 @@ URL: {url}
 
 | フィールド | 制約 |
 |---|---|
-| `title` | 日本語、**幅 25〜40**（全角 1・半角 0.5）。**事実を前に出す**（主体と行為で始め、先頭の幅 20 で核が分かる）。元記事の数字があれば入れる。争点は具体語で短く（反応が無ければ書かない）。「議論」「HN では」「記事が登場」、疑問符、`【】`、煽り語を使わない。答えを伏せない。反応の言葉は引用しない。幅が範囲外か決まった語・記号が入っていたら、`compose` が GitHub Actions の注釈（`::warning file=<記事>::`）を出す（`render.title_problems`。書き出しは止めない。曖昧さや語順は機械では見ない）。根拠は下の「タイトルの書き方」 |
+| `title` | 日本語、**幅 25〜40**（全角 1・半角 0.5）。**事実を前に出す**（主体と行為で始め、先頭の幅 20 で核が分かる）。元記事の数字があれば入れる。**反応の論調は入れない**（「〜に賛否」「〜に疑問の声」を添えない。論調は `discourse` で伝える）。「議論」「HN では」「記事が登場」、疑問符、`【】`、煽り語を使わない。答えを伏せない。反応の言葉は引用しない。幅が範囲外か決まった語・記号が入っていたら、`compose` が GitHub Actions の注釈（`::warning file=<記事>::`）を出す（`render.title_problems`。書き出しは止めない。曖昧さや語順は機械では見ない）。根拠は下の「タイトルの書き方」 |
 | `slug_hint` | 英小文字・数字・ハイフンのみ。最終 slug は `YYYY-MM-DD-<slug_hint>` |
 | `digest` | 3〜5 要素、各 60〜120 文字 |
 | `discourse` | 2〜4 要素。`stance` は `supportive` \| `critical` \| `mixed` |
@@ -385,6 +385,7 @@ URL: {url}
 | 数字を入れる（作らない） | Chartbeat の見出しテスト（約 10 万件）で数字・what/where・引用が効き、疑問符は逆効果（<https://chartbeat.com/resources/research/infographics-the-enhanced-art-of-writing-headlines/>、ベンダーの自社データ） |
 | 「議論」「HN では」の定型をやめる | 集めた 90 本余りに「議論」で終わるものは 0 本。どの記事にも付く定型句は Google がタイトルを書き換える理由になる（title-link のガイド） |
 | 答えを伏せない・盛らない・煽らない | Google Discover（誇張と重要な情報を隠すことを避ける <https://developers.google.com/search/docs/appearance/google-discover>）、Meta（Withholding と Exaggerating を釣りとして配信を減らす <https://about.fb.com/news/2017/05/news-feed-fyi-new-updates-to-reduce-clickbait-headlines/>）、Yahoo!ニュース（煽り文句・海外を国内と誤解させる見出しを禁止 <https://news.yahoo.co.jp/info/articles-guidelines>） |
+| 反応の論調を後ろに添えない（「〜に賛否」「〜に疑問の声」）（2026-09-28） | ユーザーの判断「「開発者から戸惑いの声」「過剰なこだわりに賛否」などはいらない」。どの記事にも付けられて中身を伝えず、論調は本文の `discourse` にある。M16 では争点を具体語で添える形にしていたが、生成結果は「賛否」「懸念の声」に寄った |
 | 反応の言葉は引用しない | 既存の規則（反応の原文を引用しない、投稿者を特定しうる記述をしない）。@IT のような「生の声」の引用は、元記事の言葉に限る |
 
 プロンプトの良い例・悪い例は**架空の社名・製品名・数字**にしてある。実在の記事を例にすると、同じ題材の記事で
@@ -423,7 +424,7 @@ Notion のレビュー面の両方に出す（文言は 1 か所に閉じる —
 
 ```markdown
 ---
-title: "Rust の非同期ランタイム分裂から1年、HN の争点は「互換性の約束」"
+title: "Rust の非同期ランタイム分裂から 1 年、tokio 以外の選択肢が実用段階に"
 publishedAt: 2026-09-22T09:00:00+09:00
 sourceUrl: "https://example.com/posts/rust-async-split"
 sourceTitle: "The Rust async runtime split, one year later"

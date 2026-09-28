@@ -1,5 +1,5 @@
 ---
-title: "Qwen3.5ベースの軽量意思決定モデルKevが登場、HNでは汎用分類器の実用性と独自性の議論が白熱"
+title: "Qwen3.5 ベースの意思決定モデル「Kev」公開　0.8B〜9B でローカルでも動作"
 publishedAt: 2026-09-23T08:36:56+09:00
 sourceUrl: "https://github.com/jaredpalmer/kev/tree/main"
 sourceTitle: "Kev: Tiny Jev-like family of decision models built on top of Qwen3.5"

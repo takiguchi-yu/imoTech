@@ -1,5 +1,5 @@
 ---
-title: "ShinyHunters、FBI職員の全データ流出を主張　国家安全保障への影響に懸念の声"
+title: "ShinyHunters、FBI の全職員と採用応募者のデータを取得したと主張"
 publishedAt: 2026-09-24T08:45:34+09:00
 sourceUrl: "https://www.404media.co/we-hacked-the-fbi-hackers-say-they-have-data-on-all-fbi-employees/"
 sourceTitle: "'We hacked the FBI:' Hackers say they have data on all FBI employees"

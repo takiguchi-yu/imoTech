@@ -1,5 +1,5 @@
 ---
-title: "推薦アルゴリズムによる注意の強奪への警鐘と、能動的なウェブ利用への回帰を巡るHNの議論"
+title: "筆者、推薦アルゴリズムに奪われた注意をブログとフィードの巡回で取り戻すよう提案"
 publishedAt: 2026-09-23T12:33:57+09:00
 sourceUrl: "https://alicegg.tech/2026/09/21/attention"
 sourceTitle: "Attention is all you have"
